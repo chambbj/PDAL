@@ -125,6 +125,54 @@ void outputOptions(std::string const& opt)
     std::cout << f.toRST(opt) << std::endl;
 }
 
+void outputDimensions()
+{
+    std::ostringstream strm;
+
+    std::string tablehead("================================ ==========================================================");
+    std::string headings ("Name                             Description");
+
+    strm << std::endl;
+    strm << tablehead << std::endl;
+    strm << headings << std::endl;
+    strm << tablehead << std::endl;
+
+    uint32_t name_column(32);
+    uint32_t description_column(57);
+
+    strm << std::left;
+
+    Dimension::IdList dims = Dimension::getStandardDimensions();
+    for (const auto& d : dims)
+    {
+        strm << std::setw(name_column) << Dimension::name(d) << " "
+             << std::setw(description_column) << Dimension::description(d) << std::endl;
+    }
+
+    strm << tablehead << std::endl;
+    std::cout << strm.str() << std::endl;
+
+    MetadataNode n;
+    for (const auto& d: dims)
+    {
+        std::string dimName = Dimension::name(d);
+        std::string dimDescription = Dimension::description(d);
+        //Dimension::Type::Enum type = Dimension::type(dimName);
+        //Dimension::BaseType::Enum baseType = Dimension::base(type);
+        Dimension::Type::Enum dtype = Dimension::defaultType(d);
+        //Dimension::BaseType::Enum ftype = Dimension::fromName(dimName);
+        //Dimension::Id::Enum id = Dimension::id(dimName);
+        std::string iname = Dimension::interpretationName(dtype);
+        size_t s = Dimension::size(dtype);
+        MetadataNode dim = n.add(dimName);
+        dim.add("Description", dimDescription);
+        dim.add("Interp Name", iname);
+        dim.add("Size", s);
+    }
+
+    utils::toJSON(n, std::cout);
+}
+
 int main(int argc, char* argv[])
 {
     KernelFactory f;
@@ -137,6 +185,7 @@ int main(int argc, char* argv[])
     options.add_options()
         ("command", po::value<std::string>(), "command name")
         ("debug", po::value<bool>()->zero_tokens()->implicit_value(true), "Show debug information")
+        ("dimensions", po::value<bool>()->zero_tokens()->implicit_value(true), "Show standard dimensions")
         ("drivers", po::value<bool>()->zero_tokens()->implicit_value(true), "Show drivers")
         ("help,h", po::value<bool>()->zero_tokens()->implicit_value(true), "Print help message")
         ("options", po::value<std::string>()->implicit_value("all"), "Show driver options")
@@ -173,6 +222,12 @@ int main(int argc, char* argv[])
     if (variables.count("version"))
     {
         outputVersion();
+        return 0;
+    }
+
+    if (variables.count("dimensions"))
+    {
+        outputDimensions();
         return 0;
     }
 

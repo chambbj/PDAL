@@ -206,6 +206,65 @@ enum Enum
 } // namespace Id
 typedef std::vector<Id::Enum> IdList;
 
+inline Dimension::IdList getStandardDimensions()
+{
+    Dimension::IdList ids;
+
+    using namespace Dimension;
+    ids.push_back(Id::X);
+    ids.push_back(Id::Y);
+    ids.push_back(Id::Z);
+    ids.push_back(Id::Intensity);
+    ids.push_back(Id::Amplitude);
+    ids.push_back(Id::Reflectance);
+    ids.push_back(Id::ReturnNumber);
+    ids.push_back(Id::NumberOfReturns);
+    ids.push_back(Id::ScanDirectionFlag);
+    ids.push_back(Id::EdgeOfFlightLine);
+    ids.push_back(Id::Classification);
+    ids.push_back(Id::ScanAngleRank);
+    ids.push_back(Id::UserData);
+    ids.push_back(Id::PointSourceId);
+    ids.push_back(Id::Red);
+    ids.push_back(Id::Green);
+    ids.push_back(Id::Blue);
+    ids.push_back(Id::GpsTime);
+    ids.push_back(Id::InternalTime);
+    ids.push_back(Id::OffsetTime);
+    ids.push_back(Id::IsPpsLocked);
+    ids.push_back(Id::StartPulse);
+    ids.push_back(Id::ReflectedPulse);
+    ids.push_back(Id::Pdop);
+    ids.push_back(Id::Pitch);
+    ids.push_back(Id::Roll);
+    ids.push_back(Id::PulseWidth);
+    ids.push_back(Id::Deviation);
+    ids.push_back(Id::PassiveSignal);
+    ids.push_back(Id::BackgroundRadiation);
+    ids.push_back(Id::PassiveX);
+    ids.push_back(Id::PassiveY);
+    ids.push_back(Id::PassiveZ);
+    ids.push_back(Id::XVelocity);
+    ids.push_back(Id::YVelocity);
+    ids.push_back(Id::ZVelocity);
+    ids.push_back(Id::PlatformHeading);
+    ids.push_back(Id::WanderAngle);
+    ids.push_back(Id::XBodyAccel);
+    ids.push_back(Id::YBodyAccel);
+    ids.push_back(Id::ZBodyAccel);
+    ids.push_back(Id::XBodyAngRate);
+    ids.push_back(Id::YBodyAngRate);
+    ids.push_back(Id::ZBodyAngRate);
+    ids.push_back(Id::Flag);
+    ids.push_back(Id::Mark);
+    ids.push_back(Id::Alpha);
+    ids.push_back(Id::EchoRange);
+    ids.push_back(Id::ScanChannel);
+    ids.push_back(Id::Infrared);
+
+    return ids;
+}
+
 static const int COUNT = std::numeric_limits<uint16_t>::max();
 static const int PROPRIETARY = 0xFF00;
 
