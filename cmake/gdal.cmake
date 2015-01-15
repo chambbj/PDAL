@@ -8,7 +8,7 @@ if (GDAL_FOUND)
     #
     # GDAL depends on ICONV?
     #
-    include(${PDAL_CMAKE_DIR}/iconv.cmake)
+#    include(${PDAL_CMAKE_DIR}/iconv.cmake)
 
     include_directories("${GDAL_INCLUDE_DIR}")
     mark_as_advanced(CLEAR GDAL_INCLUDE_DIR)

@@ -49,10 +49,12 @@ if(PDAL_UTILITY)
     list(APPEND PDAL_UTILITIES ${PDAL_UTILITY})
     if (APPLE AND PDAL_BUNDLE)
         add_executable(${PDAL_UTILITY} MACOSX_BUNDLE ${srcs})
+        target_link_libraries(${PDAL_UTILITY} ${PDAL_LIB_NAME} ${PDAL_UTIL_LIB_NAME})
     else (APPLE AND PDAL_BUNDLE)
-        add_executable(${PDAL_UTILITY} ${srcs})
+        PDAL_ADD_EXECUTABLE(${PDAL_UTILITY}
+		    FILES ${srcs}
+			LINK_WITH ${PDAL_LIB_NAME} ${PDAL_UTIL_LIB_NAME})
     endif(APPLE AND PDAL_BUNDLE)
-    target_link_libraries(${PDAL_UTILITY} ${PDAL_LIB_NAME})
 endif()
 
 #------------------------------------------------------------------------------

@@ -71,10 +71,14 @@ endmacro(PDAL_ADD_LIBRARY)
 # _component The part of PDAL that this library belongs to.
 # ARGN the source files for the library.
 macro(PDAL_ADD_EXECUTABLE _name)
-    add_executable(${_name} ${ARGN})
+    set(options)
+    set(oneValueArgs)
+    set(multiValueArgs FILES LINK_WITH)
+    cmake_parse_arguments(PDAL_ADD_EXECUTABLE "${options}" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
+    add_executable(${_name} ${PDAL_ADD_EXECUTABLE_FILES})
 
     # must link explicitly against boost.
-    target_link_libraries(${_name} ${Boost_LIBRARIES})
+    target_link_libraries(${_name} ${PDAL_ADD_EXECUTABLE_LINK_WITH})
     
     set(PDAL_EXECUTABLES ${PDAL_EXECUTABLES} ${_name})
     install(TARGETS ${_name} RUNTIME DESTINATION ${PDAL_BIN_INSTALL_DIR})
@@ -128,7 +132,7 @@ macro(PDAL_ADD_TEST _name)
     include_directories(${PROJECT_BINARY_DIR}/test/unit)
     set(common_srcs
         ${PROJECT_SOURCE_DIR}/test/unit/Support.cpp
-	${PROJECT_SOURCE_DIR}/test/unit/TestConfig.cpp
+        ${PROJECT_SOURCE_DIR}/test/unit/TestConfig.cpp
     )
     if (WIN32)
         list(APPEND ${PDAL_ADD_TEST_FILES} ${PDAL_TARGET_OBJECTS})

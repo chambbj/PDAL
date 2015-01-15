@@ -36,10 +36,8 @@ if (LASZIP_FOUND)
         Vlr.hpp
     )
 
-    add_executable(lasdump ${SOURCES} ${HEADERS})
-    target_link_libraries(lasdump
-        ${PDAL_UTIL_LIB_NAME}
-        ${LASZIP_LIBRARIES}
-    )
+    PDAL_ADD_EXECUTABLE(lasdump
+        FILES ${SOURCES} ${HEADERS}
+        LINK_WITH ${PDAL_UTIL_LIB_NAME} ${LASZIP_LIBRARIES})
 endif()
 
