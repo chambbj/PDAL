@@ -60,6 +60,7 @@ set(PDAL_BASE_HPP
   "${PDAL_HEADERS_DIR}/PointView.hpp"
   "${PDAL_HEADERS_DIR}/PointViewIter.hpp"
   "${PDAL_HEADERS_DIR}/QuadIndex.hpp"
+  "${PDAL_HEADERS_DIR}/Raster.hpp"
   "${PDAL_HEADERS_DIR}/Reader.hpp"
   "${PDAL_HEADERS_DIR}/SpatialReference.hpp"
   "${PDAL_HEADERS_DIR}/Stage.hpp"
@@ -94,6 +95,7 @@ set(PDAL_BASE_CPP
   PipelineWriter.cpp
   PluginManager.cpp
   QuadIndex.cpp
+  Raster.cpp
   Reader.cpp
   SpatialReference.cpp
   Stage.cpp

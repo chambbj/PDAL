@@ -49,4 +49,3 @@ if (NOT WIN32)
 endif (NOT WIN32)
 
 set_property(GLOBAL PROPERTY _UTIL_INCLUDED TRUE)
-
