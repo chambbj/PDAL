@@ -44,6 +44,7 @@
 #include <pdal/PointView.hpp>
 #include <pdal/Stage.hpp>
 #include <pdal/StageFactory.hpp>
+#include <pdal/util/FileUtils.hpp>
 
 #include <memory>
 #include <string>
@@ -75,6 +76,8 @@ TranslateKernel::TranslateKernel()
     , m_pipelineOutput("")
     , m_readerType("")
     , m_writerType("")
+    , m_tomlFileIn("")
+    , m_tomlFileOut("")
 {}
 
 void TranslateKernel::validateSwitches()
@@ -105,6 +108,10 @@ void TranslateKernel::addSwitches()
      "filter type")
     ("writer,w", po::value<std::string>(&m_writerType)->default_value(""),
      "writer type")
+    ("toml_in,ti", po::value<std::string>(&m_tomlFileIn)->default_value(""),
+     "toml input file name")
+    ("toml_out,to", po::value<std::string>(&m_tomlFileOut)->default_value(""),
+     "toml output file name")
     ;
 
     addSwitchSet(file_options);
@@ -153,6 +160,15 @@ int TranslateKernel::execute()
 
     Stage* stage = reader;
 
+    if (!m_tomlFileIn.empty()) {
+      // parse the input toml
+
+    }
+
+    std::ostream *ofs;
+    if (!m_tomlFileOut.empty())
+        ofs = FileUtils::createFile(m_tomlFileOut, false);
+
     // add each filter provided on the command-line, updating the stage pointer
     for (auto const f : m_filterType)
     {
@@ -164,7 +180,18 @@ int TranslateKernel::execute()
         filter->setOptions(filterOptions);
         filter->setInput(*stage);
         stage = filter;
+
+        if (!m_tomlFileOut.empty()) {
+            *ofs << "[" << f << "]" << std::endl;
+            for (auto const& b : extraStageOptions(f).getOptions()) {
+              *ofs << b.getName() << " = " << b.getValue<std::string>() << std::endl;
+            }
+            *ofs << std::endl;
+        }
     }
+
+    if (!m_tomlFileOut.empty())
+        FileUtils::closeFile(ofs);
 
     if (!m_writerType.empty())
     {

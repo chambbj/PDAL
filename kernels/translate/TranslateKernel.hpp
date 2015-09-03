@@ -68,6 +68,8 @@ private:
     std::string m_readerType;
     std::vector<std::string> m_filterType;
     std::string m_writerType;
+    std::string m_tomlFileIn;
+    std::string m_tomlFileOut;
 
     std::unique_ptr<PipelineManager> m_manager;
 };
