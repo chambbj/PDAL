@@ -868,49 +868,49 @@ double Raster::determineContourCurvature(const Eigen::MatrixXd& data,
         int row, int col, double postSpacing, double valueToIgnore)
 {
 
-        double mean = 0.0;
-        unsigned int nvals = 0;
+    double mean = 0.0;
+    unsigned int nvals = 0;
 
-        double value = static_cast<double>(data(row, col));
-        double north = GetNeighbor(data, row, col, NORTH);
-        double south = GetNeighbor(data, row, col, SOUTH);
-        double east = GetNeighbor(data, row, col, EAST);
-        double west = GetNeighbor(data, row, col, WEST);
-        double northeast = GetNeighbor(data, row, col, NORTHEAST);
-        double northwest = GetNeighbor(data, row, col, NORTHWEST);
-        double southeast = GetNeighbor(data, row, col, SOUTHEAST);
-        double southwest = GetNeighbor(data, row, col, SOUTHWEST);
+    double value = static_cast<double>(data(row, col));
+    double north = GetNeighbor(data, row, col, NORTH);
+    double south = GetNeighbor(data, row, col, SOUTH);
+    double east = GetNeighbor(data, row, col, EAST);
+    double west = GetNeighbor(data, row, col, WEST);
+    double northeast = GetNeighbor(data, row, col, NORTHEAST);
+    double northwest = GetNeighbor(data, row, col, NORTHWEST);
+    double southeast = GetNeighbor(data, row, col, SOUTHEAST);
+    double southwest = GetNeighbor(data, row, col, SOUTHWEST);
 
-        auto accumulate = [&nvals, &mean, valueToIgnore](double val)
+    auto accumulate = [&nvals, &mean, valueToIgnore](double val)
+    {
+        if (val != valueToIgnore)
         {
-            if (val != valueToIgnore)
-            {
-                mean += val;
-                nvals++;
-            }
-        };
+            mean += val;
+            nvals++;
+        }
+    };
 
-        accumulate(value);
-        accumulate(north);
-        accumulate(south);
-        accumulate(east);
-        accumulate(west);
-        accumulate(northeast);
-        accumulate(northwest);
-        accumulate(southeast);
-        accumulate(southwest);
+    accumulate(value);
+    accumulate(north);
+    accumulate(south);
+    accumulate(east);
+    accumulate(west);
+    accumulate(northeast);
+    accumulate(northwest);
+    accumulate(southeast);
+    accumulate(southwest);
 
-        mean /= nvals;
+    mean /= nvals;
 
-        if (value == valueToIgnore) value = mean;
-        if (north == valueToIgnore) north = mean;
-        if (south == valueToIgnore) south = mean;
-        if (east == valueToIgnore) east = mean;
-        if (west == valueToIgnore) west = mean;
-        if (northeast == valueToIgnore) northeast = mean;
-        if (northwest == valueToIgnore) northwest = mean;
-        if (southeast == valueToIgnore) southeast = mean;
-        if (southwest == valueToIgnore) southwest = mean;
+    if (value == valueToIgnore) value = mean;
+    if (north == valueToIgnore) north = mean;
+    if (south == valueToIgnore) south = mean;
+    if (east == valueToIgnore) east = mean;
+    if (west == valueToIgnore) west = mean;
+    if (northeast == valueToIgnore) northeast = mean;
+    if (northwest == valueToIgnore) northwest = mean;
+    if (southeast == valueToIgnore) southeast = mean;
+    if (southwest == valueToIgnore) southwest = mean;
 
 
     double retval = 0.0;
@@ -949,17 +949,17 @@ double Raster::determineContourCurvature(const Eigen::MatrixXd& data,
     //     double east = block(7);
     //     double southeast = block(8);
 
-        double invSqrSpacing = 1.0 / (postSpacing * postSpacing);
-        double invTwiceSpacing = 1.0 / (2 * postSpacing);
-        double zXX = (east - 2.0 * value + west) * invSqrSpacing;
-        double zYY = (north - 2.0 * value + south) * invSqrSpacing;
-        double zXY = ((-1.0 * northwest) + northeast + southwest - southeast) * invSqrSpacing * 0.25;
-        double zX = (east - west) * invTwiceSpacing;
-        double zY = (north - south) * invTwiceSpacing;
-        double p = (zX * zX) + (zY * zY);
-        double q = p + 1;
+    double invSqrSpacing = 1.0 / (postSpacing * postSpacing);
+    double invTwiceSpacing = 1.0 / (2 * postSpacing);
+    double zXX = (east - 2.0 * value + west) * invSqrSpacing;
+    double zYY = (north - 2.0 * value + south) * invSqrSpacing;
+    double zXY = ((-1.0 * northwest) + northeast + southwest - southeast) * invSqrSpacing * 0.25;
+    double zX = (east - west) * invTwiceSpacing;
+    double zY = (north - south) * invTwiceSpacing;
+    double p = (zX * zX) + (zY * zY);
+    double q = p + 1;
 
-        retval = ((zXX*zX*zX)-(2*zXY*zX*zY)+(zYY*zY*zY))/(p*std::sqrt(q*q*q));
+    retval = ((zXX*zX*zX)-(2*zXY*zX*zY)+(zYY*zY*zY))/(p*std::sqrt(q*q*q));
     // }
 
     return retval;
@@ -1191,14 +1191,14 @@ GDALDataset* Raster::createFloat32GTIFF(std::string const filename, int rows,
 
 void Raster::finalizeFloat32GTIFF(GDALDataset* dataset, float* raster, int cols, int rows, double background)
 {
-  GDALRasterBand *tBand = dataset->GetRasterBand(1);
+    GDALRasterBand *tBand = dataset->GetRasterBand(1);
 
-  tBand->SetNoDataValue((double)background);
+    tBand->SetNoDataValue((double)background);
 
-  if (rows > 0 && cols > 0)
-      tBand->RasterIO(GF_Write, 0, 0, cols, rows,
-                      raster, cols, rows,
-                      GDT_Float32, 0, 0);
+    if (rows > 0 && cols > 0)
+        tBand->RasterIO(GF_Write, 0, 0, cols, rows,
+                        raster, cols, rows,
+                        GDT_Float32, 0, 0);
 }
 
 
