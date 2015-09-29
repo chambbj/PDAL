@@ -68,15 +68,22 @@ double GetTime(HiResTimePt start, HiResTimePt stop)
     return static_cast<double>(std::chrono::duration_cast<std::chrono::milliseconds>(stop - start).count());
 }
 
-void CreateSurface(Eigen::MatrixXd& dem, const PointViewPtr data,
-                   double spacing_x, double spacing_y, uint32_t rows,
-                   uint32_t cols, float background, BOX2D extent)
+void CreateSurface(Eigen::MatrixXd& dem, Eigen::MatrixXd& density,
+                   Eigen::MatrixXd& mean, Eigen::MatrixXd& stddev,
+                   const PointViewPtr data, double spacing_x, double spacing_y,
+                   uint32_t rows, uint32_t cols, float background, BOX2D extent)
 {
     double yMax = extent.miny + rows * spacing_y;
 
     Eigen::MatrixXi occ = Eigen::MatrixXi::Zero(rows, cols);
+    Eigen::MatrixXi counts = Eigen::MatrixXi::Zero(rows, cols);
+    Eigen::MatrixXd sum = Eigen::MatrixXd::Zero(rows, cols);
+    Eigen::MatrixXd sumsum = Eigen::MatrixXd::Zero(rows, cols);
 
     dem.setConstant(background);
+    density.setConstant(background);
+    mean.setConstant(background);
+    stddev.setConstant(background);
     for (PointId idx = 0; idx < data->size(); ++idx)
     {
         using namespace Dimension::Id;
@@ -90,11 +97,14 @@ void CreateSurface(Eigen::MatrixXd& dem, const PointViewPtr data,
         };
 
         int col = clamp(static_cast<int>(floor((x - extent.minx) / spacing_x)), 0, cols-1);
-        int row = clamp(static_cast<int>(floor((yMax - y) / spacing_y)), 0, rows-1);
+        int row = clamp(static_cast<int>(floor((extent.maxy - y) / spacing_y)), 0, rows-1);
 
         double val = dem(row, col);
 
         occ(row, col) = 1;
+        counts(row, col)++;
+        sum(row, col) += z;
+        sumsum(row, col) += z*z;
 
         if (val == background)
         {
@@ -113,6 +123,9 @@ void CreateSurface(Eigen::MatrixXd& dem, const PointViewPtr data,
         for (int r = 0; r < rows; ++r)
         {
             if (occ(r, c)==1) no++;
+            density(r, c) = counts(r, c) * 0.0625;
+            mean(r, c) = sum(r, c) / counts(r, c);
+            stddev(r, c) = (sumsum(r, c) - sum(r, c) * sum(r, c) / counts(r, c)) / (counts(r, c) - 1);
         }
     }
 
@@ -169,11 +182,14 @@ Raster::Raster(const PointViewPtr data, double spacing_x, double spacing_y,
 
     // need to create the max DEM
     m_dem = Eigen::MatrixXd(m_rows, m_cols);
+    m_density = Eigen::MatrixXd(m_rows, m_cols);
+    m_mean = Eigen::MatrixXd(m_rows, m_cols);
+    m_stddev = Eigen::MatrixXd(m_rows, m_cols);
 
     m_log->get(LogLevel::Debug) << "Creating... ";
     auto start = std::chrono::high_resolution_clock::now();
-    CreateSurface(m_dem, data, m_spacing_x, m_spacing_y, m_rows,
-                  m_cols, m_background, extent);
+    CreateSurface(m_dem, m_density, m_mean, m_stddev, data, m_spacing_x,
+                  m_spacing_y, m_rows, m_cols, m_background, extent);
     auto stop = std::chrono::high_resolution_clock::now();
     m_log->get(LogLevel::Debug) << "done in " << GetTime(start, stop) << " ms\n";
 
@@ -1249,6 +1265,158 @@ void Raster::writeSlope(std::string const filename, SlopeMethod method)
 
                 poRasterData[(tYIn * m_cols) + tXIn] =
                     std::tan(tSlopeValDegree*c_pi/180.0)*100.0;
+            }
+        }
+        auto stop = std::chrono::high_resolution_clock::now();
+        m_log->get(LogLevel::Debug) << "done in " << GetTime(start, stop) << " ms\n";
+
+        if (poRasterData)
+            finalizeFloat32GTIFF(mpDstDS, poRasterData, m_cols, m_rows, m_background);
+
+        GDALClose((GDALDatasetH) mpDstDS);
+
+        delete [] poRasterData;
+    }
+}
+
+
+void Raster::writeDensity(std::string const filename)
+{
+    GDALDataset *mpDstDS;
+    mpDstDS = createFloat32GTIFF(filename, m_rows, m_cols);
+
+    if (mpDstDS)
+    {
+        int tXStart = 0, tXEnd = m_cols;
+        int tYStart = 0, tYEnd = m_rows;
+        float *poRasterData = new float[m_rows*m_cols];
+        for (uint32_t i=0; i<m_rows*m_cols; i++)
+            poRasterData[i] = m_background;
+
+        m_log->get(LogLevel::Debug) << "Writing density... ";
+        auto start = std::chrono::high_resolution_clock::now();
+        for (int tXOut = tXStart; tXOut < tXEnd; tXOut++)
+        {
+            int tXIn = tXOut;
+            for (int tYOut = tYStart; tYOut < tYEnd; tYOut++)
+            {
+                int tYIn = tYOut;
+
+                poRasterData[(tYIn * m_cols) + tXIn] = m_density(tYIn, tXIn);
+            }
+        }
+        auto stop = std::chrono::high_resolution_clock::now();
+        m_log->get(LogLevel::Debug) << "done in " << GetTime(start, stop) << " ms\n";
+
+        if (poRasterData)
+            finalizeFloat32GTIFF(mpDstDS, poRasterData, m_cols, m_rows, m_background);
+
+        GDALClose((GDALDatasetH) mpDstDS);
+
+        delete [] poRasterData;
+    }
+}
+
+
+void Raster::writeMean(std::string const filename)
+{
+    GDALDataset *mpDstDS;
+    mpDstDS = createFloat32GTIFF(filename, m_rows, m_cols);
+
+    if (mpDstDS)
+    {
+        int tXStart = 0, tXEnd = m_cols;
+        int tYStart = 0, tYEnd = m_rows;
+        float *poRasterData = new float[m_rows*m_cols];
+        for (uint32_t i=0; i<m_rows*m_cols; i++)
+            poRasterData[i] = m_background;
+
+        m_log->get(LogLevel::Debug) << "Writing mean... ";
+        auto start = std::chrono::high_resolution_clock::now();
+        for (int tXOut = tXStart; tXOut < tXEnd; tXOut++)
+        {
+            int tXIn = tXOut;
+            for (int tYOut = tYStart; tYOut < tYEnd; tYOut++)
+            {
+                int tYIn = tYOut;
+
+                poRasterData[(tYIn * m_cols) + tXIn] = m_mean(tYIn, tXIn);
+            }
+        }
+        auto stop = std::chrono::high_resolution_clock::now();
+        m_log->get(LogLevel::Debug) << "done in " << GetTime(start, stop) << " ms\n";
+
+        if (poRasterData)
+            finalizeFloat32GTIFF(mpDstDS, poRasterData, m_cols, m_rows, m_background);
+
+        GDALClose((GDALDatasetH) mpDstDS);
+
+        delete [] poRasterData;
+    }
+}
+
+
+void Raster::writeStddev(std::string const filename)
+{
+    GDALDataset *mpDstDS;
+    mpDstDS = createFloat32GTIFF(filename, m_rows, m_cols);
+
+    if (mpDstDS)
+    {
+        int tXStart = 0, tXEnd = m_cols;
+        int tYStart = 0, tYEnd = m_rows;
+        float *poRasterData = new float[m_rows*m_cols];
+        for (uint32_t i=0; i<m_rows*m_cols; i++)
+            poRasterData[i] = m_background;
+
+        m_log->get(LogLevel::Debug) << "Writing standard deviation... ";
+        auto start = std::chrono::high_resolution_clock::now();
+        for (int tXOut = tXStart; tXOut < tXEnd; tXOut++)
+        {
+            int tXIn = tXOut;
+            for (int tYOut = tYStart; tYOut < tYEnd; tYOut++)
+            {
+                int tYIn = tYOut;
+
+                poRasterData[(tYIn * m_cols) + tXIn] = m_stddev(tYIn, tXIn);
+            }
+        }
+        auto stop = std::chrono::high_resolution_clock::now();
+        m_log->get(LogLevel::Debug) << "done in " << GetTime(start, stop) << " ms\n";
+
+        if (poRasterData)
+            finalizeFloat32GTIFF(mpDstDS, poRasterData, m_cols, m_rows, m_background);
+
+        GDALClose((GDALDatasetH) mpDstDS);
+
+        delete [] poRasterData;
+    }
+}
+
+
+void Raster::writeDEMCutoff(std::string const filename)
+{
+    GDALDataset *mpDstDS;
+    mpDstDS = createFloat32GTIFF(filename, m_rows, m_cols);
+
+    if (mpDstDS)
+    {
+        int tXStart = 0, tXEnd = m_cols;
+        int tYStart = 0, tYEnd = m_rows;
+        float *poRasterData = new float[m_rows*m_cols];
+        for (uint32_t i=0; i<m_rows*m_cols; i++)
+            poRasterData[i] = m_background;
+
+        m_log->get(LogLevel::Debug) << "Writing DEM cutoff... ";
+        auto start = std::chrono::high_resolution_clock::now();
+        for (int tXOut = tXStart; tXOut < tXEnd; tXOut++)
+        {
+            int tXIn = tXOut;
+            for (int tYOut = tYStart; tYOut < tYEnd; tYOut++)
+            {
+                int tYIn = tYOut;
+
+                poRasterData[(tYIn * m_cols) + tXIn] = m_mean(tYIn, tXIn) - m_stddev(tYIn, tXIn);
             }
         }
         auto stop = std::chrono::high_resolution_clock::now();

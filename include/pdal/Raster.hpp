@@ -102,6 +102,9 @@ enum Direction
 
 /** \brief Create surface model (max Z) for the input point cloud.
   * \param tDemData The output raster. Caller must initialize this.
+  * \param tDensityData The output raster. Caller must initialize this.
+  * \param tMeanData The output raster. Caller must initialize this.
+  * \param tStddevData The output raster. Caller must initialize this.
   * \param data The input point cloud.
   * \param spacing_x The post spacing in X.
   * \param spacing_y The post spacing in Y.
@@ -111,6 +114,9 @@ enum Direction
   * \param extent The 2D extents of the input point cloud.
   */
 PDAL_DLL void CreateSurface(Eigen::MatrixXd& tDemData,
+                            Eigen::MatrixXd& tDensityData,
+                            Eigen::MatrixXd& tMeanData,
+                            Eigen::MatrixXd& tStddevData,
                             const PointViewPtr data, double spacing_x,
                             double spacing_y, uint32_t rows, uint32_t cols,
                             float background, BOX2D extent);
@@ -259,6 +265,10 @@ public:
       * \param method The slope method (default: D8).
       */
     void writeSlope(std::string const filename, SlopeMethod method=SD8);
+    void writeDensity(std::string const filename);
+    void writeMean(std::string const filename);
+    void writeStddev(std::string const filename);
+    void writeDEMCutoff(std::string const filename);
 
     /** \brief Write aspect raster to the given filename, using the specified
       * method.
@@ -304,6 +314,9 @@ public:
 private:
     BOX2D m_bounds;
     Eigen::MatrixXd m_dem;
+    Eigen::MatrixXd m_density;
+    Eigen::MatrixXd m_mean;
+    Eigen::MatrixXd m_stddev;
     double m_spacing_x;
     double m_spacing_y;
     uint32_t m_rows;
