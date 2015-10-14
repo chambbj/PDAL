@@ -98,6 +98,16 @@ double Utils::uniform(const double& minimum, const double& maximum,
 }
 
 
+uint32_t Utils::uniform(const uint32_t& minimum, const uint32_t& maximum,
+    uint32_t seed)
+{
+    std::mt19937 gen(seed);
+    std::uniform_int_distribution<uint32_t> dist(minimum, maximum);
+
+    return dist(gen);
+}
+
+
 double Utils::normal(const double& mean, const double& sigma, uint32_t seed)
 {
     std::mt19937 gen(seed);

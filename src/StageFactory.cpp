@@ -44,6 +44,7 @@
 #include <merge/MergeFilter.hpp>
 #include <mortonorder/MortonOrderFilter.hpp>
 #include <range/RangeFilter.hpp>
+#include <resample/ResampleFilter.hpp>
 #include <reprojection/ReprojectionFilter.hpp>
 #include <sort/SortFilter.hpp>
 #include <splitter/SplitterFilter.hpp>
@@ -194,6 +195,7 @@ StageFactory::StageFactory(bool no_plugins)
     PluginManager::initializePlugin(MortonOrderFilter_InitPlugin);
     PluginManager::initializePlugin(RangeFilter_InitPlugin);
     PluginManager::initializePlugin(ReprojectionFilter_InitPlugin);
+    PluginManager::initializePlugin(ResampleFilter_InitPlugin);
     PluginManager::initializePlugin(SortFilter_InitPlugin);
     PluginManager::initializePlugin(SplitterFilter_InitPlugin);
     PluginManager::initializePlugin(StatsFilter_InitPlugin);
