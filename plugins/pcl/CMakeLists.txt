@@ -170,6 +170,26 @@ PDAL_ADD_PLUGIN(dartsample_filter_libname filter dartsample
         dartsample/dart_sample.cpp
     LINK_WITH ${PCL_LIBRARIES})
 
+PDAL_ADD_PLUGIN(fastpoissondisksampling_filter_libname filter fastpoissondisksampling
+    FILES filters/FastPoissonDiskSamplingFilter.hpp filters/FastPoissonDiskSamplingFilter.cpp
+    LINK_WITH ${PCL_LIBRARIES})
+
+PDAL_ADD_PLUGIN(culler_filter_libname filter culler
+    FILES filters/CullerFilter.hpp filters/CullerFilter.cpp
+    LINK_WITH ${PCL_LIBRARIES})
+
+PDAL_ADD_PLUGIN(dart_filter_libname filter dart
+    FILES filters/DartFilter.hpp filters/DartFilter.cpp
+    LINK_WITH ${PCL_LIBRARIES})
+
+PDAL_ADD_PLUGIN(importancedart_filter_libname filter importancedart
+    FILES filters/ImportanceDartFilter.hpp filters/ImportanceDartFilter.cpp
+    LINK_WITH ${PCL_LIBRARIES})
+
+PDAL_ADD_PLUGIN(progressivedart_filter_libname filter progressivedart
+    FILES filters/ProgressiveDartFilter.hpp filters/ProgressiveDartFilter.cpp
+    LINK_WITH ${PCL_LIBRARIES})
+
 #
 # PCL Kernel
 #

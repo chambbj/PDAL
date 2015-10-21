@@ -63,6 +63,8 @@ namespace Utils
     PDAL_DLL double random(double minimum, double maximum);
     PDAL_DLL double uniform(const double& minimum=0.0f,
         const double& maximum=1.0f, uint32_t seed=0);
+    PDAL_DLL uint32_t uniform(const uint32_t& minimum=0,
+        const uint32_t& maximum=1, uint32_t seed=0);
     PDAL_DLL double normal(const double& mean=0.0f, const double& sigma=1.0f,
         uint32_t seed=0);
 
@@ -487,4 +489,3 @@ namespace Utils
 
 } // namespace Utils
 } // namespace pdal
-
