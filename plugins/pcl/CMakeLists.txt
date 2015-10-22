@@ -190,6 +190,10 @@ PDAL_ADD_PLUGIN(progressivedart_filter_libname filter progressivedart
     FILES filters/ProgressiveDartFilter.hpp filters/ProgressiveDartFilter.cpp
     LINK_WITH ${PCL_LIBRARIES})
 
+PDAL_ADD_PLUGIN(sampledvismap_filter_libname filter sampledvismap
+    FILES filters/SampledVismapFilter.hpp filters/SampledVismapFilter.cpp
+    LINK_WITH ${PCL_LIBRARIES})
+
 #
 # PCL Kernel
 #
