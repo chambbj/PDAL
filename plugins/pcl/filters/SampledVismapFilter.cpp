@@ -42,6 +42,7 @@
 
 #include <pcl/console/print.h>
 #include <pcl/point_types.h>
+#include <pcl/filters/extract_indices.h>
 #include <pcl/io/pcd_io.h>
 #include <pcl/octree/octree.h>
 
@@ -64,8 +65,9 @@ Options SampledVismapFilter::getDefaultOptions()
     Options options;
     options.add("alpha", 1.0, "Observed Sampling Radius");
     options.add("beta", 10.0, "Observer Sampling Radius");
-    options.add("gamma", 1.0, "Octree Resolution");
-    options.add("delta", 1.0, "Octree Resolution");
+    options.add("gamma", 1.0, "Octree Occupancy Resolution");
+    options.add("delta", 1.0, "Octree Fill Resolution");
+    options.add("epsilon", 1.0, "Observer Radius");
     return options;
 }
 
@@ -77,6 +79,7 @@ void SampledVismapFilter::processOptions(const Options& options)
     m_beta = options.getValueOrDefault<double>("beta", 10.0);
     m_gamma = options.getValueOrDefault<double>("gamma", 1.0);
     m_delta = options.getValueOrDefault<double>("delta", 1.0);
+    m_epsilon = options.getValueOrDefault<double>("epsilon", 1.0);
 }
 
 void SampledVismapFilter::addDimensions(PointLayoutPtr layout)
@@ -103,6 +106,8 @@ void SampledVismapFilter::filter(PointView& input)
 
     // convert PointView to PointNormal
     typedef pcl::PointCloud<pcl::PointXYZ> Cloud;
+    typedef pcl::octree::OctreePointCloudSearch<pcl::PointXYZ> Octree;
+
     Cloud::Ptr cloud(new Cloud);
     pclsupport::PDALtoPCD(std::make_shared<PointView>(input), *cloud, bounds);
 
@@ -129,62 +134,45 @@ void SampledVismapFilter::filter(PointView& input)
             break;
     }
 
-    std::random_device rd;
+    auto resample = [](Cloud::Ptr original, Cloud::Ptr cloud_s, Octree::Ptr tree_a, std::vector<int>* samples, double resolution){
+        std::random_device rd;
 
-    // Spatially indexed observed point cloud
-    pcl::octree::OctreePointCloudSearch<pcl::PointXYZ> tree_a(m_alpha / std::sqrt(3));
-    Cloud::Ptr cloud_a(new Cloud);
-    tree_a.setInputCloud (cloud_a);
+        // Spatially indexed observed point cloud
+        // pcl::octree::OctreePointCloudSearch<pcl::PointXYZ> tree_a(resolution / std::sqrt(3));
+        tree_a->setInputCloud (cloud_s);
 
-    std::vector<int> samples_a;
-    samples_a.reserve(input.size());
+        samples->reserve(original->size());
 
-    samples_a.push_back(0);
-    tree_a.addPointToCloud(cloud->points[0], cloud_a);
+        samples->push_back(0);
+        tree_a->addPointToCloud(original->points[0], cloud_s);
 
-    for (int i = 1; i < cloud->size(); ++i)
-    {
-        std::vector<int> neighbors;
-        std::vector<float> sqr_distances;
-        pcl::PointXYZ temp_pt = cloud->points[i];
-
-        int num = tree_a.radiusSearch(temp_pt, m_alpha, neighbors, sqr_distances, 1);
-
-        if (num == 0)
+        for (int i = 1; i < original->size(); ++i)
         {
-            samples_a.push_back(i);
-            tree_a.addPointToCloud(temp_pt, cloud_a);
-        }
-    }
+            std::vector<int> neighbors;
+            std::vector<float> sqr_distances;
+            pcl::PointXYZ temp_pt = original->points[i];
 
+            int num = tree_a->radiusSearch(temp_pt, resolution, neighbors, sqr_distances, 1);
+
+            if (num == 0)
+            {
+                samples->push_back(i);
+                tree_a->addPointToCloud(temp_pt, cloud_s);
+            }
+        }
+    };
+
+    Octree::Ptr tree_a(new Octree(m_alpha / std::sqrt(3)));
+    Cloud::Ptr cloud_a(new Cloud);
+    std::vector<int> samples_a;
+    resample(cloud, cloud_a, tree_a, &samples_a, m_alpha);
     log()->get(LogLevel::Info) << "Retaining " << samples_a.size() << " of " << cloud->size() << " points (" <<  100*(double)samples_a.size()/(double)cloud->size() << "%)" << std::endl;
 
-    // Spatially indexed observer point cloud
-    pcl::octree::OctreePointCloudSearch<pcl::PointXYZ> tree_b(m_beta / std::sqrt(3));
-    Cloud::Ptr cloud_b(new Cloud);
-    tree_b.setInputCloud (cloud_b);
-
+    // resample
+    Octree::Ptr tree_b(new Octree(m_beta / std::sqrt(3)));
+    Cloud::Ptr cloud_p(new Cloud);
     std::vector<int> samples_b;
-    samples_b.reserve(input.size());
-
-    samples_b.push_back(0);
-    tree_b.addPointToCloud(cloud->points[0], cloud_b);
-
-    for (int i = 1; i < cloud->size(); ++i)
-    {
-        std::vector<int> neighbors;
-        std::vector<float> sqr_distances;
-        pcl::PointXYZ temp_pt = cloud->points[i];
-
-        int num = tree_b.radiusSearch(temp_pt, m_beta, neighbors, sqr_distances, 1);
-
-        if (num == 0)
-        {
-            samples_b.push_back(i);
-            tree_b.addPointToCloud(temp_pt, cloud_b);
-        }
-    }
-
+    resample(cloud, cloud_p, tree_b, &samples_b, m_beta);
     log()->get(LogLevel::Info) << "Retaining " << samples_b.size() << " of " << cloud->size() << " points (" <<  100*(double)samples_b.size()/(double)cloud->size() << "%)" << std::endl;
 
     pcl::octree::OctreePointCloudSearch<pcl::PointXYZ> tree2(m_gamma);
@@ -214,6 +202,19 @@ void SampledVismapFilter::filter(PointView& input)
         // uint64_t nTotalIntersects = 0;
         uint64_t nFirstIntersects = 0;
         uint64_t nRays = 0;
+
+        // get points in radius
+        pcl::PointIndices::Ptr neighbors (new pcl::PointIndices ());
+        std::vector<float> sqr_distances;
+        tree_b->radiusSearch(pp, m_epsilon, neighbors->indices, sqr_distances);
+
+        pcl::ExtractIndices<pcl::PointXYZ> extract;
+        extract.setInputCloud(cloud_p);
+        extract.setIndices(neighbors);
+        Cloud::Ptr cloud_b(new Cloud);
+        extract.filter(*cloud_b);
+        // log()->get(LogLevel::Debug) << neighbors->indices.size() << ", " << cloud_p->size() << std::endl;
+
         for (int j = 0; j < cloud_b->size(); ++j)
         {
             // I can see myself

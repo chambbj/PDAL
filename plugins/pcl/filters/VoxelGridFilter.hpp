@@ -53,7 +53,7 @@ public:
     Options getDefaultOptions();
 
 private:
-    double m_leaf_x, m_leaf_y, m_leaf_z;
+    double m_leaf_x, m_leaf_y, m_leaf_z, m_leaf;
 
     virtual void processOptions(const Options& options);
     virtual PointViewSet run(PointViewPtr view);

@@ -57,6 +57,7 @@ private:
     double m_beta;
     double m_gamma;
     double m_delta;
+    double m_epsilon;
     // Dimension::Id::Enum m_numTotalIntersectsDim;
     Dimension::Id::Enum m_numRaysDim;
     // Dimension::Id::Enum m_numFirstIntersects;

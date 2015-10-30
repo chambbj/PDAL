@@ -62,6 +62,7 @@ Options VoxelGridFilter::getDefaultOptions()
     options.add("leaf_x", 1.0, "Leaf size in X dimension");
     options.add("leaf_y", 1.0, "Leaf size in Y dimension");
     options.add("leaf_z", 1.0, "Leaf size in Z dimension");
+    options.add("leaf", 0.0, "Leaf size in XYZ dimensions");
     return options;
 }
 
@@ -72,6 +73,7 @@ void VoxelGridFilter::processOptions(const Options& options)
     m_leaf_x = options.getValueOrDefault<double>("leaf_x", 1.0);
     m_leaf_y = options.getValueOrDefault<double>("leaf_y", 1.0);
     m_leaf_z = options.getValueOrDefault<double>("leaf_z", 1.0);
+    m_leaf = options.getValueOrDefault<double>("leaf", 0.0);
 }
 
 PointViewSet VoxelGridFilter::run(PointViewPtr input)
@@ -120,7 +122,10 @@ PointViewSet VoxelGridFilter::run(PointViewPtr input)
     // initial setup
     pcl::VoxelGrid<pcl::PointXYZ> vg;
     vg.setInputCloud(cloud);
-    vg.setLeafSize(m_leaf_x, m_leaf_y, m_leaf_z);
+    if (m_leaf > 0.0)
+        vg.setLeafSize(m_leaf, m_leaf, m_leaf);
+    else
+        vg.setLeafSize(m_leaf_x, m_leaf_y, m_leaf_z);
 
     // create PointCloud for results
     Cloud::Ptr cloud_f(new Cloud);
