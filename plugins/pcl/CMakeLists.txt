@@ -159,6 +159,10 @@ PDAL_ADD_PLUGIN(greedyprojection_filter_libname filter greedyprojection
     FILES filters/GreedyProjectionFilter.hpp filters/GreedyProjectionFilter.cpp
     LINK_WITH ${PCL_LIBRARIES})
 
+PDAL_ADD_PLUGIN(vismap_filter_libname filter vismap
+    FILES filters/VismapFilter.hpp filters/VismapFilter.cpp
+    LINK_WITH ${PCL_LIBRARIES})
+
 #
 # PCL Kernel
 #
