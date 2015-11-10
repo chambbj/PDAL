@@ -32,7 +32,7 @@
 * OF SUCH DAMAGE.
 ****************************************************************************/
 
-#include "DartFilter.hpp"
+#include "RelaxationDartFilter.hpp"
 
 #include <random>
 #include <vector>
@@ -49,31 +49,33 @@ namespace pdal
 {
 
 static PluginInfo const s_info =
-    PluginInfo("filters.dart", "Dart filter",
-               "http://pdal.io/stages/filters.dart.html");
+    PluginInfo("filters.relaxationdart", "Dart filter",
+               "http://pdal.io/stages/filters.relaxationdart.html");
 
-CREATE_SHARED_PLUGIN(1, 0, DartFilter, Filter, s_info)
+CREATE_SHARED_PLUGIN(1, 0, RelaxationDartFilter, Filter, s_info)
 
-std::string DartFilter::getName() const
+std::string RelaxationDartFilter::getName() const
 {
     return s_info.name;
 }
 
-Options DartFilter::getDefaultOptions()
+Options RelaxationDartFilter::getDefaultOptions()
 {
     Options options;
-    options.add("tolerance", 0.1, "Tolerance");
+    options.add("radius", 0.1, "Initial radius");
+    options.add("num_points", 10000, "Target number of points");
     return options;
 }
 
 /** \brief This method processes the PointView through the given pipeline. */
 
-void DartFilter::processOptions(const Options& options)
+void RelaxationDartFilter::processOptions(const Options& options)
 {
-    m_tolerance = options.getValueOrDefault<double>("tolerance", 0.1);
+    m_initial_radius = options.getValueOrDefault<double>("radius", 0.1);
+    m_num_points = options.getValueOrDefault<point_count_t>("num_points", 10000);
 }
 
-PointViewSet DartFilter::run(PointViewPtr input)
+PointViewSet RelaxationDartFilter::run(PointViewPtr input)
 {
     PointViewPtr output = input->makeNew();
     PointViewSet viewSet;
@@ -83,7 +85,7 @@ PointViewSet DartFilter::run(PointViewPtr input)
     if (logOutput)
         log()->floatPrecision(8);
 
-    log()->get(LogLevel::Debug2) << "Process DartFilter..." << std::endl;
+    log()->get(LogLevel::Debug2) << "Process RelaxationDartFilter..." << std::endl;
 
     BOX3D bounds;
     input->calculateBounds(bounds);
@@ -119,7 +121,7 @@ PointViewSet DartFilter::run(PointViewPtr input)
 
 
     // Spatially indexed point cloud
-    pcl::octree::OctreePointCloudSearch<pcl::PointXYZ> tree(m_tolerance / std::sqrt(3));
+    pcl::octree::OctreePointCloudSearch<pcl::PointXYZ> tree(m_initial_radius / std::sqrt(3));
     Cloud::Ptr cloud_t(new Cloud);
     tree.setInputCloud (cloud_t);
 
@@ -128,27 +130,35 @@ PointViewSet DartFilter::run(PointViewPtr input)
 
     std::random_device rd;
 
-    std::vector<int> random_order(cloud->size());
-    for (int i = 0; i < cloud->size(); ++i)
-        random_order[i] = i;
-    std::random_shuffle(random_order.begin(), random_order.end());
+    samples.push_back(0);
+    tree.addPointToCloud(cloud->points[0], cloud_t);
 
-    samples.push_back(random_order[0]);
-    tree.addPointToCloud(cloud->points[random_order[0]], cloud_t);
+    double radius = m_initial_radius;
 
-    for (auto const& i : random_order)
+    for (int iter = 0; iter < 100; ++iter)
     {
-        std::vector<int> neighbors;
-        std::vector<float> sqr_distances;
-        pcl::PointXYZ temp_pt = cloud->points[i];
-
-        int num = tree.radiusSearch(temp_pt, m_tolerance, neighbors, sqr_distances, 1);
-
-        if (num == 0)
+        for (int i = 1; i < cloud->points.size(); ++i)
         {
-            samples.push_back(i);
-            tree.addPointToCloud(temp_pt, cloud_t);
+            std::vector<int> neighbors;
+            std::vector<float> sqr_distances;
+            pcl::PointXYZ temp_pt = cloud->points[i];
+
+            int num = tree.radiusSearch(temp_pt, radius, neighbors, sqr_distances, 1);
+
+            if (num == 0)
+            {
+                samples.push_back(i);
+                tree.addPointToCloud(temp_pt, cloud_t);
+                if (samples.size() == m_num_points)
+                    break;
+            }
         }
+
+        if (samples.size() == m_num_points)
+            break;
+
+        radius *= 0.9;
+        log()->get(LogLevel::Info) << "Cloud has " << samples.size() << " points after iteration " << iter << " decrease radius to " << radius << std::endl;
     }
 
     log()->get(LogLevel::Info) << "Retaining " << samples.size() << " of " << cloud->points.size() << " points (" <<  100*(double)samples.size()/(double)cloud->points.size() << "%)" << std::endl;
