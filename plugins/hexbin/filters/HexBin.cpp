@@ -139,8 +139,29 @@ void HexBin::done(PointTableRef table)
     polygon.setf(std::ios_base::fixed, std::ios_base::floatfield);
     polygon.precision(m_options.getValueOrDefault<uint32_t>("precision", 8));
     m_grid->toWKT(polygon);
-    m_metadata.add("boundary", polygon.str(),
-        "Boundary MULTIPOLYGON of domain");
+    // m_metadata.add("boundary", polygon.str(),
+    //     "Boundary MULTIPOLYGON of domain");
+
+    if (1)
+    {
+        int num_hex = 0;
+        point_count_t num_pts = 0;
+        for (HexIter hi = m_grid->hexBegin(); hi != m_grid->hexEnd(); ++hi)
+        {
+            num_hex++;
+
+            HexInfo h = *hi;
+            num_pts += h.density();
+        }
+        double h2 = (m_grid->height() * m_grid->height());
+        double area = h2 / 2 * std::sqrt(3) * num_hex;
+        double dens = num_pts / area;
+        double spac = 1 / std::sqrt(dens);
+        m_metadata.add("point_density", dens, "Average point density across "
+            "hexagons.");
+        m_metadata.add("point_spacing", spac, "Average point spacing across "
+            "hexagons.");
+    }
 }
 
 } // namespace pdal

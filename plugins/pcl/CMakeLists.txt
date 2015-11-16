@@ -163,6 +163,10 @@ PDAL_ADD_PLUGIN(height_filter_libname filter height
     FILES filters/HeightFilter.cpp
     LINK_WITH ${PCL_LIBRARIES})
 
+PDAL_ADD_PLUGIN(analyze_filter_libname filter analyze
+    FILES filters/AnalyzeFilter.cpp
+    LINK_WITH ${PCL_LIBRARIES})
+
 #
 # PCL Kernel
 #
