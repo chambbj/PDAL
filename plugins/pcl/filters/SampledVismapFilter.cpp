@@ -37,6 +37,7 @@
 #include <random>
 #include <vector>
 
+#include "dart_sample.h"
 #include "PCLConversions.hpp"
 #include "PCLPipeline.h"
 
@@ -79,18 +80,13 @@ void SampledVismapFilter::processOptions(const Options& options)
     m_beta = options.getValueOrDefault<double>("beta", 10.0);
     m_gamma = options.getValueOrDefault<double>("gamma", 1.0);
     m_delta = options.getValueOrDefault<double>("delta", 1.0);
-    m_epsilon = options.getValueOrDefault<double>("epsilon", 1.0);
+    m_epsilon = options.getValueOrDefault<double>("epsilon", 100.0);
 }
 
 void SampledVismapFilter::addDimensions(PointLayoutPtr layout)
 {
-    // m_numTotalIntersectsDim = layout->registerOrAssignDim("NumTotalIntersects", Dimension::Type::Unsigned64);
     m_numRaysDim = layout->registerOrAssignDim("NumRays", Dimension::Type::Unsigned64);
-    // m_numFirstIntersects = layout->registerOrAssignDim("NumFirstIntersects", Dimension::Type::Unsigned64);
-    // m_numTimesSeenDim = layout->registerOrAssignDim("NumTimesSeen", Dimension::Type::Unsigned64);
-    // m_meanTotalIntersectsDim = layout->registerOrAssignDim("MeanTotalIntersects", Dimension::Type::Double);
-    m_meanFirstIntersectsDim = layout->registerOrAssignDim("MeanFirstIntersects", Dimension::Type::Double);
-    // m_meanTimesSeenDim = layout->registerOrAssignDim("MeanTimesSeen", Dimension::Type::Double);
+    m_meanOcclusionsDim = layout->registerOrAssignDim("MeanOcclusions", Dimension::Type::Double);
 }
 
 void SampledVismapFilter::filter(PointView& input)
@@ -134,98 +130,83 @@ void SampledVismapFilter::filter(PointView& input)
             break;
     }
 
-    auto resample = [](Cloud::Ptr original, Cloud::Ptr cloud_s, Octree::Ptr tree_a, std::vector<int>* samples, double resolution){
-        std::random_device rd;
+    // pick observed points from the full point cloud, with minimum distance m_alpha
+    std::vector<int> observed_samples;
+    observed_samples.reserve(cloud->size());
+    pcl::DartSample<pcl::PointXYZ> ds;
+    ds.setInputCloud(cloud);
+    ds.setRadius(m_alpha);
+    ds.filter(observed_samples);
+    log()->get(LogLevel::Info) << "Retaining " << observed_samples.size()
+        << " observed points of " << cloud->size() << " points ("
+        <<  100 * (double)observed_samples.size() / (double)cloud->size()
+        << "%)" << std::endl;
 
-        // Spatially indexed observed point cloud
-        // pcl::octree::OctreePointCloudSearch<pcl::PointXYZ> tree_a(resolution / std::sqrt(3));
-        tree_a->setInputCloud (cloud_s);
+    // create tree for down-selecting observers, based off full cloud
+    pcl::octree::OctreePointCloudSearch<pcl::PointXYZ> tree(m_epsilon);
+    tree.setInputCloud (cloud);
+    tree.defineBoundingBox();
+    tree.addPointsFromInputCloud();
 
-        samples->reserve(original->size());
-
-        samples->push_back(0);
-        tree_a->addPointToCloud(original->points[0], cloud_s);
-
-        for (int i = 1; i < original->size(); ++i)
-        {
-            std::vector<int> neighbors;
-            std::vector<float> sqr_distances;
-            pcl::PointXYZ temp_pt = original->points[i];
-
-            int num = tree_a->radiusSearch(temp_pt, resolution, neighbors, sqr_distances, 1);
-
-            if (num == 0)
-            {
-                samples->push_back(i);
-                tree_a->addPointToCloud(temp_pt, cloud_s);
-            }
-        }
-    };
-
-    Octree::Ptr tree_a(new Octree(m_alpha / std::sqrt(3)));
-    Cloud::Ptr cloud_a(new Cloud);
-    std::vector<int> samples_a;
-    resample(cloud, cloud_a, tree_a, &samples_a, m_alpha);
-    log()->get(LogLevel::Info) << "Retaining " << samples_a.size() << " of " << cloud->size() << " points (" <<  100*(double)samples_a.size()/(double)cloud->size() << "%)" << std::endl;
-
-    // resample
-    Octree::Ptr tree_b(new Octree(m_beta / std::sqrt(3)));
-    Cloud::Ptr cloud_p(new Cloud);
-    std::vector<int> samples_b;
-    resample(cloud, cloud_p, tree_b, &samples_b, m_beta);
-    log()->get(LogLevel::Info) << "Retaining " << samples_b.size() << " of " << cloud->size() << " points (" <<  100*(double)samples_b.size()/(double)cloud->size() << "%)" << std::endl;
-
+    // create tree for testing for intersected voxels, based off full cloud
     pcl::octree::OctreePointCloudSearch<pcl::PointXYZ> tree2(m_gamma);
     tree2.setInputCloud (cloud);
     tree2.defineBoundingBox();
     tree2.addPointsFromInputCloud();
 
+    // create tree for painting visibility metrics, based off full cloud
     pcl::octree::OctreePointCloudSearch<pcl::PointXYZ> tree3(m_delta);
     tree3.setInputCloud (cloud);
     tree3.defineBoundingBox();
     tree3.addPointsFromInputCloud();
 
-    // std::vector<uint64_t> numTotalIntersects(cloud->size(), 0);
+    // for each observed location, count number of rays and number of occlusions
     std::vector<uint64_t> numRays(cloud->size(), 0);
-    std::vector<uint64_t> numFirstIntersects(cloud->size(), 0);
-    // std::vector<uint64_t> numTimesSeen(cloud->size(), 0);
-    // uint64_t nRays = cloud_b->size();
-
-    for (int i = 0; i < cloud_a->size(); ++i)
+    std::vector<uint64_t> numOcclusions(cloud->size(), 0);
+    for (auto const& observed_idx : observed_samples)
     {
         // get observed point
-        pcl::PointXYZ pp = cloud_a->points[i];
-        Eigen::Vector3f p = pp.getVector3fMap();
+        pcl::PointXYZ observed_pt = cloud->points[observed_idx];
+        Eigen::Vector3f p = observed_pt.getVector3fMap();
         // move to observed height
         p[2] += 1.7;
 
-        // uint64_t nTotalIntersects = 0;
-        uint64_t nFirstIntersects = 0;
+        uint64_t nOcclusions = 0;
         uint64_t nRays = 0;
 
-        // get points in radius
+        // get points within radius of observed point from full cloud
         pcl::PointIndices::Ptr neighbors (new pcl::PointIndices ());
         std::vector<float> sqr_distances;
-        tree_b->radiusSearch(pp, m_epsilon, neighbors->indices, sqr_distances);
+        tree.radiusSearch(observed_pt, m_epsilon, neighbors->indices, sqr_distances);
 
         pcl::ExtractIndices<pcl::PointXYZ> extract;
-        extract.setInputCloud(cloud_p);
+        extract.setInputCloud(cloud);
         extract.setIndices(neighbors);
-        Cloud::Ptr cloud_b(new Cloud);
-        extract.filter(*cloud_b);
-        // log()->get(LogLevel::Debug) << neighbors->indices.size() << ", " << cloud_p->size() << std::endl;
+        Cloud::Ptr cloud_c(new Cloud);
+        extract.filter(*cloud_c);
 
-        for (int j = 0; j < cloud_b->size(); ++j)
+        // pick observer points from the points in radius, with minimum distance m_beta
+        std::vector<int> observer_samples;
+        observer_samples.reserve(cloud_c->size());
+        ds.setInputCloud(cloud_c);
+        ds.setRadius(m_beta);
+        ds.filter(observer_samples);
+        // log()->get(LogLevel::Info) << "Retaining " << observer_samples.size()
+        //     << " observer points of " << cloud_c->size() << " points ("
+        //     <<  100 * (double)observer_samples.size() / (double)cloud_c->size()
+        //     << "%)" << std::endl;
+
+        for (auto const& observer_idx : observer_samples)
         {
             // I can see myself
-            if (samples_a[i] == samples_b[j])
+            if (observed_idx == neighbors->indices[observer_idx])
                 continue;
 
-            // this will generally be cloud_b->size()
+            // this will generally be cloud_c->size()
             nRays++;
 
             // get observer point
-            Eigen::Vector3f q = cloud_b->points[j].getVector3fMap();
+            Eigen::Vector3f q = cloud->points[neighbors->indices[observer_idx]].getVector3fMap();
             // move to observer height
             q[2] += 1.7;
             // compute direction
@@ -241,50 +222,28 @@ void SampledVismapFilter::filter(PointView& input)
             if (num==0)
                 continue;
             // occluded, increment number of first intersects
-            nFirstIntersects++;
-
-            // // check for total number of intersected voxels (degree of occlusion)
-            // // num = tree2.getIntersectedVoxelCenters(p, dir, voxelsInRay);
-            // // increase tally of total occluding voxels by number currently occluding
-            // nTotalIntersects += num;
-
-            // std::vector<int> indicesInRay;
-            // Eigen::Vector3f ppp = cloud_a->points[i].getVector3fMap();
-            // // compute direction
-            // // Eigen::Vector3f dir2(p-qq);
-            // Eigen::Vector3f invdir(q-ppp);
-            // tree2.getIntersectedVoxelIndices(q, invdir, indicesInRay, 1);
-            // for (auto const& id : indicesInRay)
-            // {
-            //     numTimesSeen[id]++;
-            //     // uint64_t nts = input.getFieldAs<uint64_t>(m_numTimesSeenDim, id);
-            //     // input.setField(m_numTimesSeenDim, id, nts+1);
-            // }
+            nOcclusions++;
         }
 
         // get indices of points in the current voxel (full point cloud)
         std::vector<int> pointIdxVec;
-        tree3.voxelSearch(pp, pointIdxVec);
+        tree3.voxelSearch(observed_pt, pointIdxVec);
         // record visibility metrics
         for (auto const& id : pointIdxVec)
         {
-            // numTotalIntersects[id] = nTotalIntersects;
             numRays[id] = nRays;
-            numFirstIntersects[id] = nFirstIntersects;
+            numOcclusions[id] = nOcclusions;
         }
     }
 
     // add/write the updated dimensions
     for (int i = 0; i < cloud->size(); ++i)
     {
-        // input.setField(m_numTotalIntersectsDim, i, numTotalIntersects[i]);
         input.setField(m_numRaysDim, i, numRays[i]);
-        // input.setField(m_numFirstIntersects, i, numFirstIntersects[i]);
         if (numRays[i] > 0)
         {
-            input.setField(m_meanFirstIntersectsDim, i, (double)numFirstIntersects[i]/numRays[i]);
-            // input.setField(m_meanTotalIntersectsDim, i, (double)numTotalIntersects[i]/numRays[i]);
-            // input.setField(m_meanTimesSeenDim, i, (double)numTimesSeen[i]/numRays[i]);
+            input.setField(m_meanOcclusionsDim, i,
+                (double)numOcclusions[i] / numRays[i]);
         }
     }
 }

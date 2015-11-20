@@ -58,13 +58,8 @@ private:
     double m_gamma;
     double m_delta;
     double m_epsilon;
-    // Dimension::Id::Enum m_numTotalIntersectsDim;
     Dimension::Id::Enum m_numRaysDim;
-    // Dimension::Id::Enum m_numFirstIntersects;
-    // Dimension::Id::Enum m_meanTotalIntersectsDim;
-    Dimension::Id::Enum m_meanFirstIntersectsDim;
-    // Dimension::Id::Enum m_numTimesSeenDim;
-    // Dimension::Id::Enum m_meanTimesSeenDim;
+    Dimension::Id::Enum m_meanOcclusionsDim;
 
     virtual void addDimensions(PointLayoutPtr layout);
     virtual void processOptions(const Options& options);

@@ -195,7 +195,9 @@ PDAL_ADD_PLUGIN(relaxationdart_filter_libname filter relaxationdart
     LINK_WITH ${PCL_LIBRARIES})
 
 PDAL_ADD_PLUGIN(sampledvismap_filter_libname filter sampledvismap
-    FILES filters/SampledVismapFilter.hpp filters/SampledVismapFilter.cpp
+    FILES
+        filters/SampledVismapFilter.cpp
+        dartsample/dart_sample.cpp
     LINK_WITH ${PCL_LIBRARIES})
 
 #
