@@ -129,7 +129,9 @@ PDAL_ADD_PLUGIN(pclblock_libname filter pclblock
 # Ground Filter
 #
 PDAL_ADD_PLUGIN(ground_filter_libname filter ground
-    FILES filters/GroundFilter.hpp filters/GroundFilter.cpp
+    FILES
+        dartsample/dart_sample.cpp
+        filters/GroundFilter.cpp
     LINK_WITH ${PCL_LIBRARIES})
 
 PDAL_ADD_PLUGIN(statistical_outlier_filter_libname filter statisticaloutlier

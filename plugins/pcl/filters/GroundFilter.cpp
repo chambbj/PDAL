@@ -34,6 +34,7 @@
 
 #include "GroundFilter.hpp"
 
+#include "dart_sample.h"
 #include "PCLConversions.hpp"
 
 #include <pdal/Options.hpp>
@@ -131,13 +132,29 @@ PointViewSet GroundFilter::run(PointViewPtr input)
             break;
     }
 
+    pcl::DartSample<pcl::PointXYZ> ds;
+    ds.setInputCloud(cloud);
+    ds.setRadius(3.0);
+
+    // std::vector<int> samples;
+    pcl::PointIndices::Ptr samples(new pcl::PointIndices());
+    ds.filter(samples->indices);
+
+    pcl::ExtractIndices<pcl::PointXYZ> extract;
+    extract.setInputCloud(cloud);
+    extract.setIndices(samples);
+
+    Cloud::Ptr cloud_sampled(new Cloud);
+    extract.setNegative(false);
+    extract.filter(*cloud_sampled);
+
     // setup the PMF filter
     pcl::PointIndicesPtr idx(new pcl::PointIndices);
     if (!m_approximate)
     {
 
         pcl::ProgressiveMorphologicalFilter<pcl::PointXYZ> pmf;
-        pmf.setInputCloud(cloud);
+        pmf.setInputCloud(cloud_sampled);
         pmf.setMaxWindowSize(m_maxWindowSize);
         pmf.setSlope(m_slope);
         pmf.setMaxDistance(m_maxDistance);
@@ -150,7 +167,7 @@ PointViewSet GroundFilter::run(PointViewPtr input)
     else
     {
         pcl::ApproximateProgressiveMorphologicalFilter<pcl::PointXYZ> pmf;
-        pmf.setInputCloud(cloud);
+        pmf.setInputCloud(cloud_sampled);
         pmf.setMaxWindowSize(m_maxWindowSize);
         pmf.setSlope(m_slope);
         pmf.setMaxDistance(m_maxDistance);
@@ -174,7 +191,7 @@ PointViewSet GroundFilter::run(PointViewPtr input)
             // (corresponding to ASPRS LAS specification)
             for (const auto& i : idx->indices)
             {
-                input->setField(Dimension::Id::Classification, i, 2);
+                input->setField(Dimension::Id::Classification, samples->indices[i], 2);
             }
 
             viewSet.insert(input);
@@ -188,7 +205,7 @@ PointViewSet GroundFilter::run(PointViewPtr input)
             PointViewPtr output = input->makeNew();
             for (const auto& i : idx->indices)
             {
-                output->appendPoint(*input, i);
+                output->appendPoint(*input, samples->indices[i]);
             }
 
             viewSet.erase(input);
