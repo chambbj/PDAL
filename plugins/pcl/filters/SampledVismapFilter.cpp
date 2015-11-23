@@ -142,11 +142,32 @@ void SampledVismapFilter::filter(PointView& input)
         <<  100 * (double)observed_samples.size() / (double)cloud->size()
         << "%)" << std::endl;
 
+    // pick observer points from the full point cloud, with minimum distance m_beta
+    std::vector<int> observer_samples;
+    observer_samples.reserve(cloud->size());
+    ds.setInputCloud(cloud);
+    ds.setRadius(m_beta);
+    ds.filter(observer_samples);
+    log()->get(LogLevel::Info) << "Retaining " << observer_samples.size()
+        << " observer points of " << cloud->size() << " points ("
+        <<  100 * (double)observer_samples.size() / (double)cloud->size()
+        << "%)" << std::endl;
+
+    pcl::ExtractIndices<pcl::PointXYZ> extract1;
+    extract1.setInputCloud(cloud);
+    pcl::PointIndices::Ptr os (new pcl::PointIndices ());
+    os->indices = observer_samples;
+    extract1.setIndices(os);
+    Cloud::Ptr cloud_observer(new Cloud);
+    extract1.filter(*cloud_observer);
+    // log()->get(LogLevel::Debug) << "extract\n";
+
     // create tree for down-selecting observers, based off full cloud
     pcl::octree::OctreePointCloudSearch<pcl::PointXYZ> tree(m_epsilon);
-    tree.setInputCloud (cloud);
+    tree.setInputCloud (cloud_observer);
     tree.defineBoundingBox();
     tree.addPointsFromInputCloud();
+    // log()->get(LogLevel::Debug) << "tree\n";
 
     // create tree for testing for intersected voxels, based off full cloud
     pcl::octree::OctreePointCloudSearch<pcl::PointXYZ> tree2(m_gamma);
@@ -178,35 +199,25 @@ void SampledVismapFilter::filter(PointView& input)
         pcl::PointIndices::Ptr neighbors (new pcl::PointIndices ());
         std::vector<float> sqr_distances;
         tree.radiusSearch(observed_pt, m_epsilon, neighbors->indices, sqr_distances);
+        // log()->get(LogLevel::Debug) << "search\n";
 
-        pcl::ExtractIndices<pcl::PointXYZ> extract;
-        extract.setInputCloud(cloud);
-        extract.setIndices(neighbors);
-        Cloud::Ptr cloud_c(new Cloud);
-        extract.filter(*cloud_c);
+        // pcl::ExtractIndices<pcl::PointXYZ> extract;
+        // extract.setInputCloud(cloud);
+        // extract.setIndices(neighbors);
+        // Cloud::Ptr cloud_c(new Cloud);
+        // extract.filter(*cloud_c);
 
-        // pick observer points from the points in radius, with minimum distance m_beta
-        std::vector<int> observer_samples;
-        observer_samples.reserve(cloud_c->size());
-        ds.setInputCloud(cloud_c);
-        ds.setRadius(m_beta);
-        ds.filter(observer_samples);
-        // log()->get(LogLevel::Info) << "Retaining " << observer_samples.size()
-        //     << " observer points of " << cloud_c->size() << " points ("
-        //     <<  100 * (double)observer_samples.size() / (double)cloud_c->size()
-        //     << "%)" << std::endl;
-
-        for (auto const& observer_idx : observer_samples)
+        for (auto const& observer_idx : neighbors->indices)
         {
             // I can see myself
-            if (observed_idx == neighbors->indices[observer_idx])
+            if (observed_idx == observer_samples[observer_idx])
                 continue;
 
             // this will generally be cloud_c->size()
             nRays++;
 
             // get observer point
-            Eigen::Vector3f q = cloud->points[neighbors->indices[observer_idx]].getVector3fMap();
+            Eigen::Vector3f q = cloud->points[observer_samples[observer_idx]].getVector3fMap();
             // move to observer height
             q[2] += 1.7;
             // compute direction
