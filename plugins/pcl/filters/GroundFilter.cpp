@@ -92,6 +92,7 @@ void GroundFilter::processOptions(const Options& options)
 void GroundFilter::addDimensions(PointLayoutPtr layout)
 {
     layout->registerDim(Dimension::Id::Classification);
+    m_ppmfDim = layout->registerOrAssignDim("PPMF", Dimension::Type::Double);
 }
 
 PointViewSet GroundFilter::run(PointViewPtr input)
@@ -132,97 +133,69 @@ PointViewSet GroundFilter::run(PointViewPtr input)
             break;
     }
 
-    pcl::DartSample<pcl::PointXYZ> ds;
-    ds.setInputCloud(cloud);
-    ds.setRadius(3.0);
-
-    // std::vector<int> samples;
-    pcl::PointIndices::Ptr samples(new pcl::PointIndices());
-    ds.filter(samples->indices);
-
-    pcl::ExtractIndices<pcl::PointXYZ> extract;
-    extract.setInputCloud(cloud);
-    extract.setIndices(samples);
-
-    Cloud::Ptr cloud_sampled(new Cloud);
-    extract.setNegative(false);
-    extract.filter(*cloud_sampled);
-
-    // setup the PMF filter
-    pcl::PointIndicesPtr idx(new pcl::PointIndices);
-    if (!m_approximate)
-    {
-
-        pcl::ProgressiveMorphologicalFilter<pcl::PointXYZ> pmf;
-        pmf.setInputCloud(cloud_sampled);
-        pmf.setMaxWindowSize(m_maxWindowSize);
-        pmf.setSlope(m_slope);
-        pmf.setMaxDistance(m_maxDistance);
-        pmf.setInitialDistance(m_initialDistance);
-        pmf.setCellSize(m_cellSize);
-
-        // run the PMF filter, grabbing indices of ground returns
-        pmf.extract(idx->indices);
-    }
-    else
-    {
-        pcl::ApproximateProgressiveMorphologicalFilter<pcl::PointXYZ> pmf;
-        pmf.setInputCloud(cloud_sampled);
-        pmf.setMaxWindowSize(m_maxWindowSize);
-        pmf.setSlope(m_slope);
-        pmf.setMaxDistance(m_maxDistance);
-        pmf.setInitialDistance(m_initialDistance);
-        pmf.setCellSize(m_cellSize);
-
-        // run the PMF filter, grabbing indices of ground returns
-        pmf.extract(idx->indices);
-
-    }
-
+    PointViewPtr output = input->makeNew();
     PointViewSet viewSet;
-    if (!idx->indices.empty() && (m_classify || m_extract))
+    viewSet.insert(output);
+
+    std::vector<int> counts(cloud->size());
+
+    for (int i = 0; i < 20; ++i)
     {
+        pcl::DartSample<pcl::PointXYZ> ds;
+        ds.setInputCloud(cloud);
+        ds.setRadius(5.0);
 
-        if (m_classify)
+        // std::vector<int> samples;
+        pcl::PointIndices::Ptr samples(new pcl::PointIndices());
+        ds.filter(samples->indices);
+
+        pcl::ExtractIndices<pcl::PointXYZ> extract;
+        extract.setInputCloud(cloud);
+        extract.setIndices(samples);
+
+        Cloud::Ptr cloud_sampled(new Cloud);
+        extract.setNegative(false);
+        extract.filter(*cloud_sampled);
+
+        // setup the PMF filter
+        pcl::PointIndicesPtr idx(new pcl::PointIndices);
+        if (!m_approximate)
         {
-            log()->get(LogLevel::Debug2) << "Labeled " << idx->indices.size() << " ground returns!\n";
 
-            // set the classification label of ground returns as 2
-            // (corresponding to ASPRS LAS specification)
-            for (const auto& i : idx->indices)
-            {
-                input->setField(Dimension::Id::Classification, samples->indices[i], 2);
-            }
+            pcl::ProgressiveMorphologicalFilter<pcl::PointXYZ> pmf;
+            pmf.setInputCloud(cloud_sampled);
+            pmf.setMaxWindowSize(m_maxWindowSize);
+            pmf.setSlope(m_slope);
+            pmf.setMaxDistance(m_maxDistance);
+            pmf.setInitialDistance(m_initialDistance);
+            pmf.setCellSize(m_cellSize);
 
-            viewSet.insert(input);
+            // run the PMF filter, grabbing indices of ground returns
+            pmf.extract(idx->indices);
+        }
+        else
+        {
+            pcl::ApproximateProgressiveMorphologicalFilter<pcl::PointXYZ> pmf;
+            pmf.setInputCloud(cloud_sampled);
+            pmf.setMaxWindowSize(m_maxWindowSize);
+            pmf.setSlope(m_slope);
+            pmf.setMaxDistance(m_maxDistance);
+            pmf.setInitialDistance(m_initialDistance);
+            pmf.setCellSize(m_cellSize);
+
+            // run the PMF filter, grabbing indices of ground returns
+            pmf.extract(idx->indices);
         }
 
-        if (m_extract)
-        {
-            log()->get(LogLevel::Debug2) << "Extracted " << idx->indices.size() << " ground returns!\n";
+        for (auto const& i : idx->indices)
+          counts[samples->indices[i]]++;
+      }
 
-            // create new PointView containing only ground returns
-            PointViewPtr output = input->makeNew();
-            for (const auto& i : idx->indices)
-            {
-                output->appendPoint(*input, samples->indices[i]);
-            }
-
-            viewSet.erase(input);
-            viewSet.insert(output);
-        }
-    }
-    else
-    {
-        if (idx->indices.empty())
-            log()->get(LogLevel::Debug2) << "Filtered cloud has no ground returns!\n";
-
-        if (!(m_classify || m_extract))
-            log()->get(LogLevel::Debug2) << "Must choose --classify or --extract\n";
-
-        // return the input buffer unchanged
-        viewSet.insert(input);
-    }
+      for (PointId i = 0; i < cloud->size(); ++i)
+      {
+          input->setField(m_ppmfDim, i, (double)counts[i]/20.0);
+          output->appendPoint(*input, i);
+      }
 
     return viewSet;
 }
