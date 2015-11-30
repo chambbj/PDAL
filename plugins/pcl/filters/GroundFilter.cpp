@@ -34,6 +34,9 @@
 
 #include "GroundFilter.hpp"
 
+#include <future>
+#include <random>
+
 #include "dart_sample.h"
 #include "PCLConversions.hpp"
 
@@ -74,6 +77,8 @@ Options GroundFilter::getDefaultOptions()
     options.add("classify", true, "Apply classification labels?");
     options.add("extract", false, "Extract ground returns?");
     options.add("approximate", false, "Use approximate algorithm?");
+    options.add("num_iters", 10, "Number of iterations");
+    options.add("mean_res", 1.0, "Mean resolution");
     return options;
 }
 
@@ -87,6 +92,8 @@ void GroundFilter::processOptions(const Options& options)
     m_classify = options.getValueOrDefault<bool>("classify", true);
     m_extract = options.getValueOrDefault<bool>("extract", false);
     m_approximate = options.getValueOrDefault<bool>("approximate", false);
+    m_numIters = options.getValueOrDefault<int>("num_iters", 10);
+    m_meanRes = options.getValueOrDefault<double>("mean_res", 1.0);
 }
 
 void GroundFilter::addDimensions(PointLayoutPtr layout)
@@ -137,63 +144,118 @@ PointViewSet GroundFilter::run(PointViewPtr input)
     PointViewSet viewSet;
     viewSet.insert(output);
 
-    std::vector<int> counts(cloud->size());
+    std::vector<int> counts(cloud->size(), 0);
 
-    for (int i = 0; i < 20; ++i)
+    std::vector<std::future<std::vector<int>>> futures;
+
+    for (int i = 0; i < m_numIters; ++i)
     {
-        pcl::DartSample<pcl::PointXYZ> ds;
-        ds.setInputCloud(cloud);
-        ds.setRadius(5.0);
-
-        // std::vector<int> samples;
-        pcl::PointIndices::Ptr samples(new pcl::PointIndices());
-        ds.filter(samples->indices);
-
-        pcl::ExtractIndices<pcl::PointXYZ> extract;
-        extract.setInputCloud(cloud);
-        extract.setIndices(samples);
-
-        Cloud::Ptr cloud_sampled(new Cloud);
-        extract.setNegative(false);
-        extract.filter(*cloud_sampled);
-
-        // setup the PMF filter
-        pcl::PointIndicesPtr idx(new pcl::PointIndices);
-        if (!m_approximate)
+        auto is_ground = [](double m_meanRes, Cloud::Ptr cloud,
+            bool m_approximate, double m_maxWindowSize, double m_slope,
+            double m_maxDistance, double m_initialDistance, double m_cellSize)
         {
 
-            pcl::ProgressiveMorphologicalFilter<pcl::PointXYZ> pmf;
-            pmf.setInputCloud(cloud_sampled);
-            pmf.setMaxWindowSize(m_maxWindowSize);
-            pmf.setSlope(m_slope);
-            pmf.setMaxDistance(m_maxDistance);
-            pmf.setInitialDistance(m_initialDistance);
-            pmf.setCellSize(m_cellSize);
+          auto clamp = [](double t, double min, double max)
+	        {
+	            return ((t < min) ? min : ((t > max) ? max : t));
+	        };
 
-            // run the PMF filter, grabbing indices of ground returns
-            pmf.extract(idx->indices);
-        }
-        else
-        {
-            pcl::ApproximateProgressiveMorphologicalFilter<pcl::PointXYZ> pmf;
-            pmf.setInputCloud(cloud_sampled);
-            pmf.setMaxWindowSize(m_maxWindowSize);
-            pmf.setSlope(m_slope);
-            pmf.setMaxDistance(m_maxDistance);
-            pmf.setInitialDistance(m_initialDistance);
-            pmf.setCellSize(m_cellSize);
+          std::random_device rd;
+          std::mt19937 gen(rd());
 
-            // run the PMF filter, grabbing indices of ground returns
-            pmf.extract(idx->indices);
-        }
+          std::uniform_real_distribution<> dis(0.3, m_meanRes);
+          double rad = dis(gen);
 
-        for (auto const& i : idx->indices)
-          counts[samples->indices[i]]++;
+          std::normal_distribution<double> dis1(m_maxWindowSize, 15.0);
+          double winSize = clamp(dis1(gen), 1.0, 100.0);
+
+          std::normal_distribution<double> dis2(m_slope, 15.0);
+          double slope = std::tan(clamp(dis2(gen), 0.0, 90.0)*3.14159/180.0);
+
+          std::normal_distribution<double> dis3(m_maxDistance, 4.0);
+          double maxDist = clamp(dis3(gen), 0.01, 100.0);
+
+          std::normal_distribution<double> dis4(m_initialDistance, 1.0);
+          double initDist = clamp(dis4(gen), 0.01, 1.0);
+
+          std::normal_distribution<double> dis5(m_cellSize, 1.0);
+          double cellSize = clamp(dis5(gen), 0.5, 2.0);
+
+          std::cerr << "Process with " << rad
+                    << ", " << winSize
+                    << ", " << slope
+                    << ", " << maxDist
+                    << ", " << initDist
+                    << ", " << cellSize << std::endl;
+
+          pcl::DartSample<pcl::PointXYZ> ds;
+          ds.setInputCloud(cloud);
+          ds.setRadius(rad);
+
+          // std::vector<int> samples;
+          pcl::PointIndices::Ptr samples(new pcl::PointIndices());
+          ds.filter(samples->indices);
+
+          pcl::ExtractIndices<pcl::PointXYZ> extract;
+          extract.setInputCloud(cloud);
+          extract.setIndices(samples);
+
+          Cloud::Ptr cloud_sampled(new Cloud);
+          extract.setNegative(false);
+          extract.filter(*cloud_sampled);
+
+          // setup the PMF filter
+          pcl::PointIndicesPtr idx(new pcl::PointIndices);
+          if (!m_approximate)
+          {
+
+              pcl::ProgressiveMorphologicalFilter<pcl::PointXYZ> pmf;
+              pmf.setInputCloud(cloud_sampled);
+              pmf.setMaxWindowSize(winSize);
+              pmf.setSlope(slope);
+              pmf.setMaxDistance(maxDist);
+              pmf.setInitialDistance(initDist);
+              pmf.setCellSize(cellSize);
+
+              // run the PMF filter, grabbing indices of ground returns
+              pmf.extract(idx->indices);
+          }
+          else
+          {
+              pcl::ApproximateProgressiveMorphologicalFilter<pcl::PointXYZ> pmf;
+              pmf.setInputCloud(cloud_sampled);
+              pmf.setMaxWindowSize(winSize);
+              pmf.setSlope(slope);
+              pmf.setMaxDistance(maxDist);
+              pmf.setInitialDistance(initDist);
+              pmf.setCellSize(cellSize);
+
+              // run the PMF filter, grabbing indices of ground returns
+              pmf.extract(idx->indices);
+          }
+
+          std::vector<int> retval(idx->indices.size(), 0);
+          int j = 0;
+          for (auto const& i : idx->indices)
+              retval[j++] = samples->indices[i];
+
+          return retval;
+        };
+
+        futures.push_back(std::async(is_ground, m_meanRes, cloud,
+            m_approximate, m_maxWindowSize, m_slope,
+            m_maxDistance, m_initialDistance, m_cellSize));
+      }
+
+      for (auto& fut : futures) {
+        std::vector<int> samples = fut.get();
+        for (auto const& i : samples)
+          counts[i]++;
       }
 
       for (PointId i = 0; i < cloud->size(); ++i)
       {
-          input->setField(m_ppmfDim, i, (double)counts[i]/20.0);
+          input->setField(m_ppmfDim, i, (double)counts[i]/m_numIters);
           output->appendPoint(*input, i);
       }
 

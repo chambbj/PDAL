@@ -68,6 +68,8 @@ private:
     bool m_classify;
     bool m_extract;
     bool m_approximate;
+    int m_numIters;
+    double m_meanRes;
     Dimension::Id::Enum m_ppmfDim;
 
     virtual void addDimensions(PointLayoutPtr layout);
