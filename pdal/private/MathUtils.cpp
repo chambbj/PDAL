@@ -75,6 +75,55 @@ PointViewPtr demeanPointView(const PointView& view)
     return outView;
 }
 
+Eigen::Matrix3d computeCovariance(PointView& view, Eigen::Vector3d centroid,
+                                  std::vector<PointId> ids)
+{
+    using namespace Eigen;
+
+    auto n = ids.size();
+
+    // demean the neighborhood
+    MatrixXd A(3, n);
+    size_t k = 0;
+    for (auto const& j : ids)
+    {
+        A(0, k) = view.getFieldAs<double>(Dimension::Id::X, j) - centroid[0];
+        A(1, k) = view.getFieldAs<double>(Dimension::Id::Y, j) - centroid[1];
+        A(2, k) = view.getFieldAs<double>(Dimension::Id::Z, j) - centroid[2];
+        k++;
+    }
+
+    return A * A.transpose();
+}
+
+Eigen::Matrix3d computeJacobian(Eigen::Vector3d centroid,
+                                Eigen::Vector3d normal)
+{
+    using namespace Eigen;
+
+    double rho = centroid.dot(normal);
+    double rho2 = rho*rho;
+    Vector3d p = rho * normal;
+    double angle = std::acos(rho/(centroid.norm()*normal.norm()));
+    std::cerr << "Angle is " << angle*180/3.14159 << std::endl;
+    if (angle*180/3.14159 > 90)
+    {
+        normal *= -1;
+        std::cerr << "Flipping normal to " << normal.transpose() << std::endl;
+        rho = centroid.dot(normal);
+        rho2 = rho*rho;
+        p = rho * normal;
+    }
+    auto w = p.x()*p.x()+p.y()*p.y();
+    auto rootw = std::sqrt(w);
+    Matrix3d J;
+    J.row(0) << normal.x(), normal.y(), normal.z();
+    J.row(1) << p.x()*p.z()/(rootw*rho2), p.y()*p.z()/(rootw*rho2), -rootw/rho2;
+    J.row(2) << -p.y()/w, p.x()/w, 0;
+
+    return J;
+}
+
 PointViewPtr demeanPointView(const PointView& view, double* centroid)
 {
     using namespace Eigen;

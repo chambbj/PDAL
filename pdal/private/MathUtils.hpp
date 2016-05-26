@@ -133,6 +133,135 @@ Eigen::Matrix3d computeCovariance(const PointView& view,
     const PointIdList& ids);
 
 /**
+ * \brief Compute the covariance matrix of a collection of points.
+ *
+ * Computes the covariance matrix of a collection of points (specified by
+ * PointId) sampled from the input PointView.
+ *
+ * \code
+ * // build 3D kd-tree
+ * KD3Index kdi(view);
+ * kdi.build();
+ *
+ * // find the k-nearest neighbors of the first point (k=8)
+ * auto ids = kdi.neighbors(0, 8);
+ *
+ * // compute the centroid
+ * auto centroid = computeCentroid(view, ids);
+ *
+ * // compute the covariance
+ * auto cov = computeCovariance(view, centroid, ids);
+ * \endcode
+ *
+ * \param view the source PointView.
+ * \param ids a vector of PointIds specifying a subset of points.
+ * \return the covariance matrix of the XYZ dimensions.
+ */
+PDAL_DLL Eigen::Matrix3d computeCovariance(PointView& view,
+                                           Eigen::Vector3d centroid,
+                                           std::vector<PointId> ids);
+
+/**
+  Compute second derivative in X direction using central difference method.
+
+  \param data the incoming Eigen matrix.
+  \param spacing the grid spacing of the matrix.
+  \return the second derivative in X.
+*/
+template <typename Derived>
+PDAL_DLL double centralDiffX2(const Eigen::MatrixBase<Derived>& data,
+                              double spacing)
+{
+    if (data.rows() != 3 || data.cols() != 3)
+        throw pdal_error("Must provide 3x3 matrix to centralDiffX2");
+    if (spacing <= 0.0)
+        throw pdal_error("Must provide positive spacing to centralDiffX2");
+    return (data(1, 2) - 2.0 * data(1, 1) + data(1, 0)) / (spacing * spacing);
+}
+
+/**
+  Compute second derivative in Y direction using central difference method.
+
+  \param data the incoming Eigen matrix.
+  \param spacing the grid spacing of the matrix.
+  \return the second derivative in Y.
+*/
+template <typename Derived>
+PDAL_DLL double centralDiffY2(const Eigen::MatrixBase<Derived>& data,
+                              double spacing)
+{
+    if (data.rows() != 3 || data.cols() != 3)
+        throw pdal_error("Must provide 3x3 matrix to centralDiffY2");
+    if (spacing <= 0.0)
+        throw pdal_error("Must provide positive spacing to centralDiffY2");
+    return (data(0, 1) - 2.0 * data(1, 1) + data(2, 1)) / (spacing * spacing);
+}
+
+/**
+  Compute mixed second derivative of X in the Y direction using central
+  difference method.
+
+  \param data the incoming Eigen matrix.
+  \param spacing the grid spacing of the matrix.
+  \return the second derivative of X in the Y direction.
+*/
+template <typename Derived>
+PDAL_DLL double centralDiffXY(const Eigen::MatrixBase<Derived>& data,
+                              double spacing)
+{
+    if (data.rows() != 3 || data.cols() != 3)
+        throw pdal_error("Must provide 3x3 matrix to centralDiffXY");
+    if (spacing <= 0.0)
+        throw pdal_error("Must provide positive spacing to centralDiffXY");
+    return ((-1.0 * data(0, 0)) + data(0, 2) + data(2, 0) - data(2, 2)) /
+           (4.0 * spacing * spacing);
+}
+
+/**
+  Compute first derivative in X direction using central difference method.
+
+  \param data the incoming Eigen matrix.
+  \param spacing the grid spacing of the matrix.
+  \return the first derivative in X.
+*/
+template <typename Derived>
+PDAL_DLL double centralDiffX(const Eigen::MatrixBase<Derived>& data,
+                             double spacing)
+{
+    if (data.rows() != 3 || data.cols() != 3)
+        throw pdal_error("Must provide 3x3 matrix to centralDiffX");
+    if (spacing <= 0.0)
+        throw pdal_error("Must provide positive spacing to centralDiffX");
+    return (data(1, 2) - data(1, 0)) / (2 * spacing);
+}
+
+/**
+  Compute first derivative in Y direction using central difference method.
+
+  \param data the incoming Eigen matrix.
+  \param spacing the grid spacing of the matrix.
+  \return the first derivative in Y.
+*/
+template <typename Derived>
+PDAL_DLL double centralDiffY(const Eigen::MatrixBase<Derived>& data,
+                             double spacing)
+{
+    if (data.rows() != 3 || data.cols() != 3)
+        throw pdal_error("Must provide 3x3 matrix to centralDiffY");
+    if (spacing <= 0.0)
+        throw pdal_error("Must provide positive spacing to centralDiffY");
+    return (data(0, 1) - data(2, 1)) / (2 * spacing);
+}
+
+/**
+  Clean a raster.
+
+  \param data the Eigen matrix to clean.
+  \return the cleaned raster.
+*/
+PDAL_DLL Eigen::MatrixXd cleanDSM(Eigen::MatrixXd data);
+
+/**
   Compute the rank of a collection of points.
 
   Computes the rank of a collection of points (specified by PointId) sampled
@@ -227,6 +356,46 @@ void erodeDiamond(std::vector<double>& data, size_t rows, size_t cols, int itera
 */
 Eigen::MatrixXd pointViewToEigen(const PointView& view);
 Eigen::MatrixXd pointViewToEigen(const PointView& view, const PointIdList& ids);
+
+// PDAL_DLL Eigen::Vector3d pointRefToVector3d(const PointRef& p)
+// {
+//   Eigen::Vector3d pt(p.getFieldAs<float>(Dimension::Id::X),
+//                      p.getFieldAs<float>(Dimension::Id::Y),
+//                      p.getFieldAs<float>(Dimension::Id::Z));
+//   return pt;
+// }
+
+/**
+  Replace NaNs with mean.
+
+  \param data the incoming Eigen matrix.
+  \return the updated Eigen matrix.
+*/
+template <typename Derived>
+PDAL_DLL Eigen::MatrixXd replaceNaNs(const Eigen::MatrixBase<Derived>& data)
+{
+    Derived out(data);
+
+    double mean(0.0);
+    int nv(0);
+    for (int i = 0; i < data.size(); ++i)
+    {
+        if (std::isnan(data(i)))
+            continue;
+        mean += data(i);
+        nv++;
+    }
+    mean /= nv;
+
+    // replace NaNs with mean
+    for (int i = 0; i < data.size(); ++i)
+    {
+        if (std::isnan(data(i)))
+            out(i) = mean;
+    }
+
+    return out;
+}
 
 /**
   Write Eigen Matrix as a GDAL raster.
