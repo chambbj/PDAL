@@ -72,6 +72,21 @@ class PointView;
 PDAL_DLL Eigen::Vector3f computeCentroid(PointView& view, std::vector<PointId> ids);
 
 /**
+ * \brief Compute the centroid of a collection of points.
+ *
+ * Computes the 3D centroid of the input PointView.
+ *
+ * \code
+ * // compute the centroid
+ * auto centroid = computeCentroid(view);
+ * \endcode
+ *
+ * \param view the source PointView.
+ * \return the 3D centroid of the XYZ dimensions.
+ */
+PDAL_DLL Eigen::Vector3f computeCentroid(PointView& view);
+
+/**
  * \brief Compute the covariance matrix of a collection of points.
  *
  * Computes the covariance matrix of a collection of points (specified by
@@ -97,6 +112,51 @@ PDAL_DLL Eigen::Vector3f computeCentroid(PointView& view, std::vector<PointId> i
  * \return the covariance matrix of the XYZ dimensions.
  */
 PDAL_DLL Eigen::Matrix3f computeCovariance(PointView& view, std::vector<PointId> ids);
+
+/**
+ * \brief Compute the covariance matrix of a collection of points.
+ *
+ * Computes the covariance matrix of a collection of points (specified by
+ * PointId) sampled from the input PointView.
+ *
+ * \code
+ * // build 3D kd-tree
+ * KD3Index kdi(view);
+ * kdi.build();
+ *
+ * // find the k-nearest neighbors of the first point (k=8)
+ * double x = view.getFieldAs<double>(Dimension::Id::X, 0);
+ * double y = view.getFieldAs<double>(Dimension::Id::Y, 0);
+ * double z = view.getFieldAs<double>(Dimension::Id::Z, 0);
+ * auto ids = kdi.neighbors(x, y, z, 8);
+ *
+ * // compute the centroid
+ * auto centroid = computeCentroid(view, ids);
+ *
+ * // compute the covariance
+ * auto cov = computeCovariance(view, centroid, ids);
+ * \endcode
+ *
+ * \param view the source PointView.
+ * \param ids a vector of PointIds specifying a subset of points.
+ * \return the covariance matrix of the XYZ dimensions.
+ */
+PDAL_DLL Eigen::Matrix3f computeCovariance(PointView& view, Eigen::Vector3f centroid, std::vector<PointId> ids);
+
+/**
+ * \brief Compute the covariance matrix of a collection of points.
+ *
+ * Computes the covariance matrix of the input PointView.
+ *
+ * \code
+ * // compute the covariance
+ * auto cov = computeCovariance(view);
+ * \endcode
+ *
+ * \param view the source PointView.
+ * \return the covariance matrix of the XYZ dimensions.
+ */
+PDAL_DLL Eigen::Matrix3f computeCovariance(PointView& view);
 
 /**
  * \brief Compute the rank of a collection of points.

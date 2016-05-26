@@ -63,6 +63,27 @@ Eigen::Vector3f computeCentroid(PointView& view, std::vector<PointId> ids)
     return centroid;
 }
 
+Eigen::Vector3f computeCentroid(PointView& view)
+{
+    using namespace Eigen;
+
+    auto n = view.size();
+
+    double mx, my, mz;
+    mx = my = mz = 0.0;
+    for (PointId j = 0; j < n; ++j)
+    {
+        mx += view.getFieldAs<double>(Dimension::Id::X, j);
+        my += view.getFieldAs<double>(Dimension::Id::Y, j);
+        mz += view.getFieldAs<double>(Dimension::Id::Z, j);
+    }
+
+    Vector3f centroid;
+    centroid << mx/n, my/n, mz/n;
+
+    return centroid;
+}
+
 Eigen::Matrix3f computeCovariance(PointView& view, std::vector<PointId> ids)
 {
     using namespace Eigen;
@@ -75,6 +96,48 @@ Eigen::Matrix3f computeCovariance(PointView& view, std::vector<PointId> ids)
     MatrixXf A(3, n);
     size_t k = 0;
     for (auto const& j : ids)
+    {
+        A(0, k) = view.getFieldAs<double>(Dimension::Id::X, j) - centroid[0];
+        A(1, k) = view.getFieldAs<double>(Dimension::Id::Y, j) - centroid[1];
+        A(2, k) = view.getFieldAs<double>(Dimension::Id::Z, j) - centroid[2];
+        k++;
+    }
+
+    return A * A.transpose();
+}
+
+Eigen::Matrix3f computeCovariance(PointView& view, Eigen::Vector3f centroid, std::vector<PointId> ids)
+{
+    using namespace Eigen;
+
+    auto n = ids.size();
+
+    // demean the neighborhood
+    MatrixXf A(3, n);
+    size_t k = 0;
+    for (auto const& j : ids)
+    {
+        A(0, k) = view.getFieldAs<double>(Dimension::Id::X, j) - centroid[0];
+        A(1, k) = view.getFieldAs<double>(Dimension::Id::Y, j) - centroid[1];
+        A(2, k) = view.getFieldAs<double>(Dimension::Id::Z, j) - centroid[2];
+        k++;
+    }
+
+    return A * A.transpose();
+}
+
+Eigen::Matrix3f computeCovariance(PointView& view)
+{
+    using namespace Eigen;
+
+    auto n = view.size();
+
+    auto centroid = computeCentroid(view);
+
+    // demean the neighborhood
+    MatrixXf A(3, n);
+    size_t k = 0;
+    for (PointId j = 0; j < n; ++j)
     {
         A(0, k) = view.getFieldAs<double>(Dimension::Id::X, j) - centroid[0];
         A(1, k) = view.getFieldAs<double>(Dimension::Id::Y, j) - centroid[1];
