@@ -96,7 +96,7 @@ void NormalFilter::filter(PointView& view)
         auto B = computeCovariance(view, ids);
 
         // perform the eigen decomposition
-        SelfAdjointEigenSolver<Matrix3f> solver(B);
+        SelfAdjointEigenSolver<Matrix3d> solver(B);
         if (solver.info() != Success)
             throw pdal_error("Cannot perform eigen decomposition.");
         auto eval = solver.eigenvalues();

@@ -69,7 +69,7 @@ class PointView;
  * \param ids a vector of PointIds specifying a subset of points.
  * \return the 3D centroid of the XYZ dimensions.
  */
-PDAL_DLL Eigen::Vector3f computeCentroid(PointView& view, std::vector<PointId> ids);
+PDAL_DLL Eigen::Vector3d computeCentroid(PointView& view, std::vector<PointId> ids);
 
 /**
  * \brief Compute the centroid of a collection of points.
@@ -84,7 +84,7 @@ PDAL_DLL Eigen::Vector3f computeCentroid(PointView& view, std::vector<PointId> i
  * \param view the source PointView.
  * \return the 3D centroid of the XYZ dimensions.
  */
-PDAL_DLL Eigen::Vector3f computeCentroid(PointView& view);
+PDAL_DLL Eigen::Vector3d computeCentroid(PointView& view);
 
 /**
  * \brief Compute the covariance matrix of a collection of points.
@@ -111,7 +111,7 @@ PDAL_DLL Eigen::Vector3f computeCentroid(PointView& view);
  * \param ids a vector of PointIds specifying a subset of points.
  * \return the covariance matrix of the XYZ dimensions.
  */
-PDAL_DLL Eigen::Matrix3f computeCovariance(PointView& view, std::vector<PointId> ids);
+PDAL_DLL Eigen::Matrix3d computeCovariance(PointView& view, std::vector<PointId> ids);
 
 /**
  * \brief Compute the covariance matrix of a collection of points.
@@ -141,7 +141,7 @@ PDAL_DLL Eigen::Matrix3f computeCovariance(PointView& view, std::vector<PointId>
  * \param ids a vector of PointIds specifying a subset of points.
  * \return the covariance matrix of the XYZ dimensions.
  */
-PDAL_DLL Eigen::Matrix3f computeCovariance(PointView& view, Eigen::Vector3f centroid, std::vector<PointId> ids);
+PDAL_DLL Eigen::Matrix3d computeCovariance(PointView& view, Eigen::Vector3d centroid, std::vector<PointId> ids);
 
 /**
  * \brief Compute the covariance matrix of a collection of points.
@@ -156,7 +156,7 @@ PDAL_DLL Eigen::Matrix3f computeCovariance(PointView& view, Eigen::Vector3f cent
  * \param view the source PointView.
  * \return the covariance matrix of the XYZ dimensions.
  */
-PDAL_DLL Eigen::Matrix3f computeCovariance(PointView& view);
+PDAL_DLL Eigen::Matrix3d computeCovariance(PointView& view);
 
 /**
  * \brief Compute the rank of a collection of points.

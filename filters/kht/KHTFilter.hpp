@@ -37,6 +37,8 @@
 #include <pdal/Filter.hpp>
 #include <pdal/plugin.hpp>
 
+#include <Eigen/Dense>
+
 #include <memory>
 
 extern "C" int32_t KHTFilter_ExitFunc();
@@ -63,8 +65,13 @@ public:
     Options getDefaultOptions();
 
 private:
+    double m_totalArea;
+    point_count_t m_totalPoints;
+    
     virtual void addDimensions(PointLayoutPtr layout);
     virtual void processOptions(const Options& options);
+    std::vector<PointId> refineFit(PointViewPtr view, std::vector<PointId> ids, Eigen::Vector3d centroid, Eigen::Vector3d normal, double threshold);
+    Eigen::Matrix3d computeJacobian(Eigen::Vector3d centroid, Eigen::Vector3d normal);
     void cluster(PointViewPtr view, std::vector<PointId> ids, int level);
     virtual PointViewSet run(PointViewPtr view);
 

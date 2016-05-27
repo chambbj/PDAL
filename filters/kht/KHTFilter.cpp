@@ -39,6 +39,8 @@
 
 #include <Eigen/Dense>
 
+#include <cmath>
+
 namespace pdal
 {
 
@@ -70,13 +72,63 @@ void KHTFilter::addDimensions(PointLayoutPtr layout)
     layout->registerDim(Dimension::Id::Classification);
 }
 
+std::vector<PointId> KHTFilter::refineFit(PointViewPtr view, std::vector<PointId> ids, Eigen::Vector3d centroid, Eigen::Vector3d normal, double threshold)
+{
+    using namespace Eigen;
+
+    // Create a plane with given normal (equal to eigenvector corresponding to
+    // smallest eigenvalue) and passing through the centroid.
+    auto plane = Hyperplane<double, 3>(normal, 0);
+
+    // Iterate over node indices and only keep those that are within a given
+    // tolerance of the plane surface.
+    std::vector<PointId> new_ids;
+    for (auto const& j : ids)
+    {
+        Vector3d pt(view->getFieldAs<double>(Dimension::Id::X, j),
+                    view->getFieldAs<double>(Dimension::Id::Y, j),
+                    view->getFieldAs<double>(Dimension::Id::Z, j));
+        pt = pt - centroid;
+        if (plane.absDistance(pt) < threshold)
+            new_ids.push_back(j);
+    }
+    return new_ids;
+}
+
+Eigen::Matrix3d KHTFilter::computeJacobian(Eigen::Vector3d centroid, Eigen::Vector3d normal)
+{
+    using namespace Eigen;
+
+    double rho = centroid.dot(normal);
+    double rho2 = rho*rho;
+    Vector3d p = rho * normal;
+    double angle = std::acos(rho/(centroid.norm()*normal.norm()));
+    std::cerr << "Angle is " << angle*180/3.14159 << std::endl;
+    if (angle*180/3.14159 > 90)
+    {
+        normal *= -1;
+        std::cerr << "Flipping normal to " << normal.transpose() << std::endl;
+        rho = centroid.dot(normal);
+        rho2 = rho*rho;
+        p = rho * normal;
+    }
+    auto w = p.x()*p.x()+p.y()*p.y();
+    auto rootw = std::sqrt(w);
+    Matrix3d J;
+    J.row(0) << normal.x(), normal.y(), normal.z();
+    J.row(1) << p.x()*p.z()/(rootw*rho2), p.y()*p.z()/(rootw*rho2), -rootw/rho2;
+    J.row(2) << -p.y()/w, p.x()/w, 0;
+
+    return J;
+}
+
 void KHTFilter::cluster(PointViewPtr view, std::vector<PointId> ids, int level)
 {
     using namespace Eigen;
 
     bool coplanar(false);
     point_count_t np(ids.size());
-    SelfAdjointEigenSolver<Matrix3f> solver;
+    SelfAdjointEigenSolver<Matrix3d> solver;
     std::vector<PointId> original_ids(ids);
 
     // If there are too few points in the current node, then bail. We need a
@@ -106,14 +158,21 @@ void KHTFilter::cluster(PointViewPtr view, std::vector<PointId> ids, int level)
     double zSplit = zEdge/2 + bounds.minz;
     double maxEdge = std::max(xEdge, std::max(yEdge, zEdge));
     double threshold = maxEdge / 10;
+    
+    if (level == 0)
+    {
+        m_totalArea = xEdge * yEdge * zEdge;
+        m_totalPoints = view->size();
+        std::cerr << m_totalPoints << ", " << m_totalArea << std::endl;
+    }
 
     // Don't even begin looking for clusters of coplanar points until we reach a
     // given level in the octree.
-    if (level > 4)
+    if (level > 3)
     {
         // Compute centroid of the node (as given by ids).
         auto centroid = computeCentroid(*view, ids);
-        
+
         // Compute covariance of the node (as given by ids).
         auto B = computeCovariance(*view, centroid, ids);
 
@@ -129,95 +188,107 @@ void KHTFilter::cluster(PointViewPtr view, std::vector<PointId> ids, int level)
         if ((eigVal[1] > 25 * eigVal[0]) && (6 * eigVal[1] > eigVal[2]))
         {
             coplanar = true;
-            
-            auto refineFit = [&view, &ids, &centroid, &normal, &threshold]()
-            {
-                // Create a plane with given normal (equal to eigenvector 
-                // corresponding to smallest eigenvalue) and passing through the
-                // centroid.
-                auto plane = Hyperplane<float, 3>(normal, 0);
-                
-                // Iterate over node indices and only keep those that are within
-                // a given tolerance of the plane surface.
-                std::vector<PointId> new_ids;
-                for (auto const& j : ids)
-                {
-                    Vector3f pt(view->getFieldAs<double>(Dimension::Id::X, j),
-                                view->getFieldAs<double>(Dimension::Id::Y, j),
-                                view->getFieldAs<double>(Dimension::Id::Z, j));
-                    pt = pt - centroid;
-                    if (plane.absDistance(pt) < threshold)
-                        new_ids.push_back(j);
-                }
-                return new_ids;
-            };
-            
-            auto new_ids = refineFit();
-            
-            // Use the new ids from this point forward.
+
+            // Refine the planar fit and use the updated ids going forward.
+            auto new_ids = refineFit(view, ids, centroid, normal, threshold);
             ids.swap(new_ids);
-                
-            // Re-compute centroid of the node with updated indices.
-            centroid = computeCentroid(*view, ids);
-            
-            // Re-compute covariance of the node with updated indices.
-            // TODO(chambbj): we very often compute centroid separately, even
-            // though it is already computed here - maybe we should require
-            // centroid as a parameter - while the user will be forced to
-            // compute centroid, she will also have it available for reuse
-            B = computeCovariance(*view, centroid, ids);
-            
-            // Perform the eigen decomposition once again with updated 
+
+            // Re-compute centroid and covariance  of the node with updated
             // indices.
+            centroid = computeCentroid(*view, ids);
+            B = computeCovariance(*view, centroid, ids);
+
+            // Perform the eigen decomposition with updated indices.
             solver.compute(B);
             if (solver.info() != Success)
                 throw pdal_error("Cannot perform eigen decomposition.");
-            eigVec = solver.eigenvectors();
-            normal = eigVec.col(0);
-
-            // TODO(chambbj): consider how general purpose this could be, while
-            // this works...what _should_ it look like
-            auto computeJacobian = [&centroid, &normal]()
-            {    
-                auto rho = centroid.dot(normal);
-                auto rho2 = rho*rho;
-                auto p = rho * normal;
-                auto w = p.x()*p.x()+p.y()*p.y();
-                auto rootw = std::sqrt(w);
-                Matrix3f J;
-                J.row(0) << normal.x(), normal.y(), normal.z();
-                J.row(1) << p.x()*p.z()/(rootw*rho2),
-                      p.y()*p.z()/(rootw*rho2),
-                      -rootw/rho2;
-                J.row(2) << -p.y()/w, p.x()/w, 0;
-                
-                return J;
-            };
+            normal = solver.eigenvectors().col(0);
 
             // Construct the Jacobian.
-            auto J = computeJacobian();
+            auto J = computeJacobian(centroid, normal);
             
-            // Transform covariance to polar coordinates using Jacobian.
-            auto Sigma = J * B * J.transpose();
+            std::cerr << "Cov: " << B << std::endl;
+            std::cerr << "Jac: " << J << std::endl;
+            
+            std::cerr << "sanity: " << J * B << std::endl;
 
-            // Perform the eigen decomposition once again with the covariance in
-            // polar coordinates.
+            // Transform covariance to polar coordinates using Jacobian.
+            Matrix3d Sigma = J * B * J.transpose();
+            Sigma(0,0) += 0.001; // to avoid singular cases
+            std::cerr << "Sigma: " << Sigma << std::endl;
+
+            // Perform the eigen decomposition with the covariance in polar
+            // coordinates.
             solver.compute(Sigma);
             if (solver.info() != Success)
                 throw pdal_error("Cannot perform eigen decomposition.");
-            eigVal = solver.eigenvalues();
-            eigVec = solver.eigenvectors();
-            auto stdev = std::sqrt(eigVal[0]);
+            auto stdev = std::sqrt(solver.eigenvalues()[0]);
+            auto gmin = 2 * stdev * solver.eigenvectors().col(0);
+          
+            Matrix3d SigmaInv;
+            double SigmaDet;
+            bool invertible;
+            Sigma.computeInverseAndDetWithCheck(SigmaInv, SigmaDet, invertible);
+            
+            if (!invertible)
+            {
+                std::cerr << "sigma is not invertible\n";
+                return;
+            }
+              
+            std::cerr << "Determinant: " << SigmaDet << std::endl;
+            std::cerr << "Inverse: " << SigmaInv << std::endl;
+            
+            auto factor = 1 / (15.7496 * std::sqrt(SigmaDet));
+            std::cerr << "Factor: " << factor << std::endl;
+            
+            auto weight = 0.75 * (xEdge * yEdge * zEdge / m_totalArea) + 0.25 * (ids.size() / m_totalPoints);
+            std::cerr << "Weight: " << weight << std::endl;
+            
+            // compute centroid of polar coordinates
+            double rhoSum = 0.0;
+            double thetaSum = 0.0;
+            double phiSum = 0.0;
+            for (auto const& j : ids)
+            {
+                Vector3d pt(view->getFieldAs<double>(Dimension::Id::X, j),
+                            view->getFieldAs<double>(Dimension::Id::Y, j),
+                            view->getFieldAs<double>(Dimension::Id::Z, j));
+                pt = pt - centroid;
+                auto rho = std::sqrt(pt.x()*pt.x()+pt.y()*pt.y()+pt.z()*pt.z());
+                rhoSum += rho;
+                thetaSum += std::atan(pt.y()/pt.x());
+                phiSum += std::acos(pt.z()/rho);
+            }
+            Vector3d polarCentroid(rhoSum/ids.size(), phiSum/ids.size(), thetaSum/ids.size());
+            
+            for (auto const& j : ids)
+            {
+                Vector3d pt(view->getFieldAs<double>(Dimension::Id::X, j),
+                            view->getFieldAs<double>(Dimension::Id::Y, j),
+                            view->getFieldAs<double>(Dimension::Id::Z, j));
+                pt = pt - centroid;
+                auto rho = std::sqrt(pt.x()*pt.x()+pt.y()*pt.y()+pt.z()*pt.z());
+                auto theta = std::atan(pt.y()/pt.x());
+                auto phi = std::acos(pt.z()/rho);
+                Vector3d q(rho, phi, theta);
+                q = q - polarCentroid;
+                auto temp = -0.5 * q.transpose() * SigmaInv * q;
+                auto temp2 = factor * std::exp(temp);
+                auto temp3 = weight * temp2;
+                // std::cerr << q.transpose() << std::endl;
+                // std::cerr << std::exp(temp) << std::endl;
+                // printf("%f.8\n", temp3);
+                printf("Bin %.2f %.2f %.2f gets a vote of %.8f\n", theta*180/3.14, phi*180/3.14, rho, temp3);
+            }
+            
+            // std::cerr << gmin << std::endl;
 
-            std::cerr << "found candidate coplanar at level " << level
-                      << " with " << np << " points before and "
-                      << ids.size() << " points after refinement\n";
-            std::cerr << Sigma << std::endl;
-            std::cerr << "eigenvalues:\n";
-            std::cerr << eigVal << std::endl;
-            std::cerr << "eigenvectors:\n";
-            std::cerr << eigVec << std::endl;
-            std::cerr << "threshold will be " << stdev << std::endl;
+            log()->get(LogLevel::Debug2)
+                << "Level: " << level << "\t"
+                << "Points before: " << np << "\t"
+                << "Points after: " << ids.size() << "\t"
+                << "Stdev: " << stdev << std::endl;
 
             return;
         }
@@ -227,7 +298,7 @@ void KHTFilter::cluster(PointViewPtr view, std::vector<PointId> ids, int level)
     // current node.
     std::vector<PointId> upNWView, upNEView, upSEView, upSWView, downNWView,
         downNEView, downSEView, downSWView;
-        
+
     // Populate the children, using original_ids as we may have removed points
     // from the ids vector during refinement.
     for (auto const& i : original_ids)
