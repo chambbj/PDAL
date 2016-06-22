@@ -1,5 +1,6 @@
 add_subdirectory(approximatecoplanar)
 add_subdirectory(attribute)
+add_subdirectory(bartels)
 add_subdirectory(chipper)
 add_subdirectory(colorization)
 add_subdirectory(crop)

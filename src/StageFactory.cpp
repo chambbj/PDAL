@@ -39,6 +39,7 @@
 // filters
 #include <approximatecoplanar/ApproximateCoplanarFilter.hpp>
 #include <attribute/AttributeFilter.hpp>
+#include <bartels/BartelsFilter.hpp>
 #include <chipper/ChipperFilter.hpp>
 #include <colorization/ColorizationFilter.hpp>
 #include <crop/CropFilter.hpp>
@@ -220,6 +221,7 @@ StageFactory::StageFactory(bool no_plugins)
     // filters
     PluginManager::initializePlugin(ApproximateCoplanarFilter_InitPlugin);
     PluginManager::initializePlugin(AttributeFilter_InitPlugin);
+    PluginManager::initializePlugin(BartelsFilter_InitPlugin);
     PluginManager::initializePlugin(ChipperFilter_InitPlugin);
     PluginManager::initializePlugin(ColorizationFilter_InitPlugin);
     PluginManager::initializePlugin(CropFilter_InitPlugin);
