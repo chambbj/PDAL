@@ -37,6 +37,8 @@
 #include <pdal/Filter.hpp>
 #include <pdal/plugin.hpp>
 
+#include <Eigen/Dense>
+
 #include <memory>
 #include <unordered_map>
 
@@ -75,9 +77,8 @@ private:
     std::vector<double> morphOpen(PointViewPtr view, int radius);
     std::vector<double> morphClose(PointViewPtr view, int radius);
     std::vector<double> thinPlateSpline(PointViewPtr view, int radius);
-    void TPS(PointViewPtr control);
+    Eigen::MatrixXd TPS(PointViewPtr control, double cell_size);
     PointIdHash calculateHash(PointViewPtr view);
-    PointIdHash calculateHash(PointViewPtr view, double cell_size);
     std::vector<PointId> processGround(PointViewPtr view);
     virtual PointViewSet run(PointViewPtr view);
 
