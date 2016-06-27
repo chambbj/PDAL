@@ -76,11 +76,13 @@ private:
     virtual void addArgs(ProgramArgs& args);
     std::vector<double> morphOpen(PointViewPtr view, int radius);
     std::vector<double> morphClose(PointViewPtr view, int radius);
-    std::vector<double> thinPlateSpline(PointViewPtr view, int radius);
-    Eigen::MatrixXd TPS(PointViewPtr control, double cell_size);
     Eigen::MatrixXd TPS(Eigen::MatrixXd cx, Eigen::MatrixXd cy, Eigen::MatrixXd cz, double cell_size);
     PointIdHash calculateHash(PointViewPtr view);
-    std::vector<PointId> processGround(PointViewPtr view);
+    Eigen::MatrixXd matrixOpen(Eigen::MatrixXd data, int radius);
+    Eigen::MatrixXd computeResidual(Eigen::MatrixXd cz, Eigen::MatrixXd surface);
+    Eigen::MatrixXd computeThresholds(Eigen::MatrixXd T, int radius);
+    void applyTopHat(Eigen::MatrixXd *cz, Eigen::MatrixXd *surface, int radius);
+    void downsampleMin(Eigen::MatrixXd *cx, Eigen::MatrixXd *cy, Eigen::MatrixXd* cz, Eigen::MatrixXd *dcx, Eigen::MatrixXd *dcy, Eigen::MatrixXd* dcz, double cell_size);
     virtual PointViewSet run(PointViewPtr view);
 
     MongusFilter& operator=(const MongusFilter&); // not implemented
