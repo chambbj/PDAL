@@ -438,18 +438,205 @@ PointIdHash MongusFilter::calculateHash(PointViewPtr view)
     return hash;
 }
 
-// std::vector<PointId> MongusFilter::processGround(PointViewPtr view)
-// {
-//     point_count_t np(view->size());
-//
-//     std::vector<PointId> groundIdx;
-//     for (PointId i = 0; i < np; ++i)
-//         groundIdx.push_back(i);
-//
-//     // Create new cloud to hold the filtered results. Apply the morphological
-//     // opening operation at the current window size.
-//     // auto maxZ = morphOpen(ground, window_sizes[j]*0.5);
-// }
+std::vector<PointId> MongusFilter::processGround(PointViewPtr view)
+{
+    point_count_t np(view->size());
+
+    std::vector<PointId> groundIdx;
+    // for (PointId i = 0; i < np; ++i)
+    //     groundIdx.push_back(i);
+
+    // initialization
+
+    // start by stashing the original Z values
+    std::vector<double> originalZ;
+    for (PointId i = 0; i < view->size(); ++i)
+    {
+        originalZ.push_back(view->getFieldAs<double>(Dimension::Id::Z, i));
+    }
+
+    view->calculateBounds(m_bounds);
+
+    m_cellSize = 1.0;
+
+    m_numCols = static_cast<int>(ceil((m_bounds.maxx - m_bounds.minx)/m_cellSize)) + 1;
+    m_numRows = static_cast<int>(ceil((m_bounds.maxy - m_bounds.miny)/m_cellSize)) + 1;
+    m_maxRow = m_bounds.miny + m_numRows * m_cellSize;
+
+    auto mo = morphOpen(view, 11);
+
+    // Z now contains the opened values
+    for (PointId i = 0; i < view->size(); ++i)
+    {
+        view->setField(Dimension::Id::Z, i, mo[i]);
+    }
+
+    auto mc = morphClose(view, 9);
+
+    // Z now contains the closed values
+    for (PointId i = 0; i < view->size(); ++i)
+    {
+        view->setField(Dimension::Id::Z, i, mc[i]);
+    }
+
+    // compare morphological values to orignals and replace low points
+    for (PointId i = 0; i < view->size(); ++i)
+    {
+        auto diff = view->getFieldAs<double>(Dimension::Id::Z, i) - originalZ[i];
+
+        if (diff >= 1.0)
+        {
+            // std::cerr << diff << std::endl;
+            continue;
+        }
+        else
+        {
+            view->setField(Dimension::Id::Z, i, originalZ[i]);
+        }
+    }
+
+    //----------------
+
+    // create control points matrix at 1m cell size
+    double initCellSize = 1.0;
+
+    int num_cols = static_cast<int>(ceil((m_bounds.maxx - m_bounds.minx)/initCellSize)) + 1;
+    int num_rows = static_cast<int>(ceil((m_bounds.maxy - m_bounds.miny)/initCellSize)) + 1;
+    int max_row = m_bounds.miny + num_rows * initCellSize;
+
+    using namespace Eigen;
+
+    MatrixXd cx = MatrixXd::Constant(num_rows, num_cols, std::numeric_limits<double>::quiet_NaN());
+    MatrixXd cy = MatrixXd::Constant(num_rows, num_cols, std::numeric_limits<double>::quiet_NaN());
+    MatrixXd cz = MatrixXd::Constant(num_rows, num_cols, std::numeric_limits<double>::max());
+
+    auto clamp = [](double t, double min, double max)
+    {
+        return ((t < min) ? min : ((t > max) ? max : t));
+    };
+
+    for (PointId i = 0; i < view->size(); ++i)
+    {
+        using namespace Dimension::Id;
+        double x = view->getFieldAs<double>(X, i);
+        double y = view->getFieldAs<double>(Y, i);
+        double z = view->getFieldAs<double>(Z, i);
+
+        int xIndex =
+            clamp(static_cast<int>(floor((x - m_bounds.minx) / initCellSize)),
+                  0, num_cols-1);
+        int yIndex =
+            clamp(static_cast<int>(floor((max_row - y) / initCellSize)),
+                  0, num_rows-1);
+
+        if (z < cz(yIndex, xIndex))
+        {
+            cx(yIndex, xIndex) = x;
+            cy(yIndex, xIndex) = y;
+            cz(yIndex, xIndex) = z;
+        }
+    }
+
+    // downsample control at max_level
+    int level = 8;
+    double newCellSize = std::pow(2, level-1);
+
+    MatrixXd dcx, dcy, dcz;
+    downsampleMin(&cx, &cy, &cz, &dcx, &dcy, &dcz, newCellSize);
+
+    // compute TPS at max_level
+    auto surface = TPS(dcx, dcy, dcz, newCellSize);
+
+    int end_level = 4;
+
+    MatrixXd t;
+
+    // for each level counting back to 0
+    for (int l = level-1; l >= end_level; --l)
+    {
+        std::cerr << "Level " << l << std::endl;
+
+        // downsample control at level
+        newCellSize = std::pow(2, l-1);
+        downsampleMin(&cx, &cy, &cz, &dcx, &dcy, &dcz, newCellSize);
+
+        // applyTopHat(&dcz, &surface, 2*l);
+        auto R = computeResidual(dcz, surface);
+        std::cerr << R << std::endl << std::endl;
+        auto maxZ = matrixOpen(R, 2*l);
+        std::cerr << maxZ << std::endl << std::endl;
+        MatrixXd T = R - maxZ;
+        std::cerr << T << std::endl << std::endl;
+        t = computeThresholds(T, 2*l);
+        std::cerr << t << std::endl << std::endl;
+        for (int r = 0; r < T.rows(); ++r)
+        {
+            for (int c = 0; c < T.cols(); ++c)
+            {
+                if (T(r,c) > t(r,c))
+                {
+                    std::cerr << T(r, c) << " > " << t(r, c) << " at (" << r << "," << c << ")" << std::endl;
+                    dcz(r, c) = std::numeric_limits<double>::max();
+                }
+            }
+        }
+
+        // compute TPS with update control at level
+        surface.resize(dcz.rows(), dcz.cols());
+        surface = TPS(dcx, dcy, dcz, newCellSize);
+    }
+    std::cerr << "check\n";
+
+    // apply final filtering (top hat) using raw points against TPS
+    for (PointId i = 0; i < view->size(); ++i)
+    {
+        using namespace Dimension::Id;
+        double x = view->getFieldAs<double>(X, i);
+        double y = view->getFieldAs<double>(Y, i);
+        double z = view->getFieldAs<double>(Z, i);
+
+        int c =
+            clamp(static_cast<int>(floor((x - m_bounds.minx) / newCellSize)),
+                  0, surface.rows()-1);
+        int r =
+            clamp(static_cast<int>(floor((max_row - y) / newCellSize)),
+                  0, surface.cols()-1);
+
+        double res = z - surface(r, c);
+        // std::cerr << z << "\t" << surface(r, c) << "\t" << res << "\t" << t(r, c) << std::endl;
+        // open?
+        if (res > t(r, c))
+            continue;
+        groundIdx.push_back(i);
+    }
+    
+    return groundIdx;
+
+    // temporary
+    // PointViewPtr output = view->makeNew();
+    //
+    // PointId i = 0;
+    // for (int r = 0; r < surface.rows(); ++r)
+    // {
+    //     for (int c = 0; c < surface.cols(); ++c)
+    //     {
+    //         using namespace Dimension::Id;
+    //         if (std::isnan(dcx(r, c)))
+    //             continue;
+    //         output->setField(X, i, dcx(r, c));
+    //         if (std::isnan(dcy(r, c)))
+    //             continue;
+    //         output->setField(Y, i, dcy(r, c));
+    //         if (surface(r, c) == 0)
+    //             continue;
+    //         output->setField(Z, i, surface(r, c));
+    //         i++;
+    //     }
+    // }
+    //
+    // viewSet.erase(view);
+    // viewSet.insert(output);
+}
 
 void MongusFilter::downsampleMin(Eigen::MatrixXd *cx, Eigen::MatrixXd *cy, Eigen::MatrixXd* cz, Eigen::MatrixXd *dcx, Eigen::MatrixXd *dcy, Eigen::MatrixXd* dcz, double cell_size)
 {
@@ -637,255 +824,60 @@ void MongusFilter::applyTopHat(Eigen::MatrixXd *cz, Eigen::MatrixXd *surface, in
     }
 }
 
-PointViewSet MongusFilter::run(PointViewPtr input)
+PointViewSet MongusFilter::run(PointViewPtr view)
 {
     bool logOutput = log()->getLevel() > LogLevel::Debug1;
     if (logOutput)
         log()->floatPrecision(8);
     log()->get(LogLevel::Debug2) << "Process MongusFilter...\n";
 
-    // auto idx = processGround(input);
+    auto idx = processGround(view);
 
     PointViewSet viewSet;
 
-    // initialization
-
-    // start by stashing the original Z values
-    std::vector<double> originalZ;
-    for (PointId i = 0; i < input->size(); ++i)
+    if (!idx.empty() && (m_classify || m_extract))
     {
-        originalZ.push_back(input->getFieldAs<double>(Dimension::Id::Z, i));
-    }
 
-    input->calculateBounds(m_bounds);
-
-    m_cellSize = 1.0;
-
-    m_numCols = static_cast<int>(ceil((m_bounds.maxx - m_bounds.minx)/m_cellSize)) + 1;
-    m_numRows = static_cast<int>(ceil((m_bounds.maxy - m_bounds.miny)/m_cellSize)) + 1;
-    m_maxRow = m_bounds.miny + m_numRows * m_cellSize;
-
-    auto mo = morphOpen(input, 11);
-
-    // Z now contains the opened values
-    for (PointId i = 0; i < input->size(); ++i)
-    {
-        input->setField(Dimension::Id::Z, i, mo[i]);
-    }
-
-    auto mc = morphClose(input, 9);
-
-    // Z now contains the closed values
-    for (PointId i = 0; i < input->size(); ++i)
-    {
-        input->setField(Dimension::Id::Z, i, mc[i]);
-    }
-
-    // compare morphological values to orignals and replace low points
-    for (PointId i = 0; i < input->size(); ++i)
-    {
-        auto diff = input->getFieldAs<double>(Dimension::Id::Z, i) - originalZ[i];
-
-        if (diff >= 1.0)
+        if (m_classify)
         {
-            // std::cerr << diff << std::endl;
-            continue;
-        }
-        else
-        {
-            input->setField(Dimension::Id::Z, i, originalZ[i]);
-        }
-    }
+            log()->get(LogLevel::Debug2) << "Labeled " << idx.size() << " ground returns!\n";
 
-    //----------------
-
-    // create control points matrix at 1m cell size
-    double initCellSize = 1.0;
-
-    int num_cols = static_cast<int>(ceil((m_bounds.maxx - m_bounds.minx)/initCellSize)) + 1;
-    int num_rows = static_cast<int>(ceil((m_bounds.maxy - m_bounds.miny)/initCellSize)) + 1;
-    int max_row = m_bounds.miny + num_rows * initCellSize;
-
-    using namespace Eigen;
-
-    MatrixXd cx = MatrixXd::Constant(num_rows, num_cols, std::numeric_limits<double>::quiet_NaN());
-    MatrixXd cy = MatrixXd::Constant(num_rows, num_cols, std::numeric_limits<double>::quiet_NaN());
-    MatrixXd cz = MatrixXd::Constant(num_rows, num_cols, std::numeric_limits<double>::max());
-
-    auto clamp = [](double t, double min, double max)
-    {
-        return ((t < min) ? min : ((t > max) ? max : t));
-    };
-
-    for (PointId i = 0; i < input->size(); ++i)
-    {
-        using namespace Dimension::Id;
-        double x = input->getFieldAs<double>(X, i);
-        double y = input->getFieldAs<double>(Y, i);
-        double z = input->getFieldAs<double>(Z, i);
-
-        int xIndex =
-            clamp(static_cast<int>(floor((x - m_bounds.minx) / initCellSize)),
-                  0, num_cols-1);
-        int yIndex =
-            clamp(static_cast<int>(floor((max_row - y) / initCellSize)),
-                  0, num_rows-1);
-
-        if (z < cz(yIndex, xIndex))
-        {
-            cx(yIndex, xIndex) = x;
-            cy(yIndex, xIndex) = y;
-            cz(yIndex, xIndex) = z;
-        }
-    }
-
-    // downsample control at max_level
-    int level = 8;
-    double newCellSize = std::pow(2, level-1);
-
-    MatrixXd dcx, dcy, dcz;
-    downsampleMin(&cx, &cy, &cz, &dcx, &dcy, &dcz, newCellSize);
-
-    // compute TPS at max_level
-    auto surface = TPS(dcx, dcy, dcz, newCellSize);
-
-    int end_level = 4;
-
-    MatrixXd t;
-
-    // for each level counting back to 0
-    for (int l = level-1; l >= end_level; --l)
-    {
-        std::cerr << "Level " << l << std::endl;
-
-        // downsample control at level
-        newCellSize = std::pow(2, l-1);
-        downsampleMin(&cx, &cy, &cz, &dcx, &dcy, &dcz, newCellSize);
-
-        // applyTopHat(&dcz, &surface, 2*l);
-        auto R = computeResidual(dcz, surface);
-        std::cerr << R << std::endl << std::endl;
-        auto maxZ = matrixOpen(R, 2*l);
-        std::cerr << maxZ << std::endl << std::endl;
-        MatrixXd T = R - maxZ;
-        std::cerr << T << std::endl << std::endl;
-        t = computeThresholds(T, 2*l);
-        std::cerr << t << std::endl << std::endl;
-        for (int r = 0; r < T.rows(); ++r)
-        {
-            for (int c = 0; c < T.cols(); ++c)
+            // set the classification label of ground returns as 2
+            // (corresponding to ASPRS LAS specification)
+            for (const auto& i : idx)
             {
-                if (T(r,c) > t(r,c))
-                {
-                    std::cerr << T(r, c) << " > " << t(r, c) << " at (" << r << "," << c << ")" << std::endl;
-                    dcz(r, c) = std::numeric_limits<double>::max();
-                }
+                view->setField(Dimension::Id::Classification, i, 2);
             }
+
+            viewSet.insert(view);
         }
 
-        // compute TPS with update control at level
-        surface.resize(dcz.rows(), dcz.cols());
-        surface = TPS(dcx, dcy, dcz, newCellSize);
+        if (m_extract)
+        {
+            log()->get(LogLevel::Debug2) << "Extracted " << idx.size() << " ground returns!\n";
+
+            // create new PointView containing only ground returns
+            PointViewPtr output = view->makeNew();
+            for (const auto& i : idx)
+            {
+                output->appendPoint(*view, i);
+            }
+
+            viewSet.erase(view);
+            viewSet.insert(output);
+        }
     }
-
-    // apply final filtering (top hat) using raw points against TPS
-
-    PointViewPtr output = input->makeNew();
-    for (PointId i = 0; i < input->size(); ++i)
+    else
     {
-        using namespace Dimension::Id;
-        double x = input->getFieldAs<double>(X, i);
-        double y = input->getFieldAs<double>(Y, i);
-        double z = input->getFieldAs<double>(Z, i);
+        if (idx.empty())
+            log()->get(LogLevel::Debug2) << "Filtered cloud has no ground returns!\n";
 
-        int c =
-            clamp(static_cast<int>(floor((x - m_bounds.minx) / newCellSize)),
-                  0, surface.rows()-1);
-        int r =
-            clamp(static_cast<int>(floor((max_row - y) / newCellSize)),
-                  0, surface.cols()-1);
+        if (!(m_classify || m_extract))
+            log()->get(LogLevel::Debug2) << "Must choose --classify or --extract\n";
 
-        double res = z - surface(r, c);
-        // std::cerr << z << "\t" << surface(r, c) << "\t" << res << "\t" << t(r, c) << std::endl;
-        // open?
-        if (res > t(r, c))
-            continue;
-        output->appendPoint(*input, i);
+        // return the view buffer unchanged
+        viewSet.insert(view);
     }
-
-    viewSet.erase(input);
-    viewSet.insert(output);
-
-// temporary
-    // PointViewPtr output = input->makeNew();
-    //
-    // PointId i = 0;
-    // for (int r = 0; r < surface.rows(); ++r)
-    // {
-    //     for (int c = 0; c < surface.cols(); ++c)
-    //     {
-    //         using namespace Dimension::Id;
-    //         if (std::isnan(dcx(r, c)))
-    //             continue;
-    //         output->setField(X, i, dcx(r, c));
-    //         if (std::isnan(dcy(r, c)))
-    //             continue;
-    //         output->setField(Y, i, dcy(r, c));
-    //         if (surface(r, c) == 0)
-    //             continue;
-    //         output->setField(Z, i, surface(r, c));
-    //         i++;
-    //     }
-    // }
-    //
-    // viewSet.erase(input);
-    // viewSet.insert(output);
-
-    //----------------
-
-    // if (!idx.empty() && (m_classify || m_extract))
-    // {
-    //
-    //     if (m_classify)
-    //     {
-    //         log()->get(LogLevel::Debug2) << "Labeled " << idx.size() << " ground returns!\n";
-    //
-    //         // set the classification label of ground returns as 2
-    //         // (corresponding to ASPRS LAS specification)
-    //         for (const auto& i : idx)
-    //         {
-    //             input->setField(Dimension::Id::Classification, i, 2);
-    //         }
-    //
-    //         viewSet.insert(input);
-    //     }
-    //
-    //     if (m_extract)
-    //     {
-    //         log()->get(LogLevel::Debug2) << "Extracted " << idx.size() << " ground returns!\n";
-    //
-    //         // create new PointView containing only ground returns
-    //         PointViewPtr output = input->makeNew();
-    //         for (const auto& i : idx)
-    //         {
-    //             output->appendPoint(*input, i);
-    //         }
-    //
-    //         viewSet.erase(input);
-    //         viewSet.insert(output);
-    //     }
-    // }
-    // else
-    // {
-    //     if (idx.empty())
-    //         log()->get(LogLevel::Debug2) << "Filtered cloud has no ground returns!\n";
-    //
-    //     if (!(m_classify || m_extract))
-    //         log()->get(LogLevel::Debug2) << "Must choose --classify or --extract\n";
-    //
-    //     // return the input buffer unchanged
-    //     viewSet.insert(input);
-    // }
 
     return viewSet;
 }
