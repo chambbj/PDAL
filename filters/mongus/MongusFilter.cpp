@@ -304,7 +304,7 @@ Eigen::MatrixXd MongusFilter::TPS(PointViewPtr control, double cell_size)
             MatrixXd Xn = Xs.block(row_start, col_start, row_size, col_size);
             MatrixXd Yn = Ys.block(row_start, col_start, row_size, col_size);
             MatrixXd Hn = H.block(row_start, col_start, row_size, col_size);
-            
+
             int nsize = Hn.size();
             VectorXd T = VectorXd::Zero(nsize);
             MatrixXd P = MatrixXd::Zero(nsize, 3);
@@ -354,7 +354,7 @@ Eigen::MatrixXd MongusFilter::TPS(PointViewPtr control, double cell_size)
 
             Vector3d a = x.tail(3);
             VectorXd w = x.head(nsize);
-            
+
             double sum = 0.0;
             double xi = m_bounds.minx + outer_col * cell_size + cell_size / 2;
             double xi2 = Xs(outer_row, outer_col);
@@ -376,9 +376,9 @@ Eigen::MatrixXd MongusFilter::TPS(PointViewPtr control, double cell_size)
                     continue;
                 sum += w(j) * rsqr * std::log10(std::sqrt(rsqr));
             }
-            
+
             S(outer_row, outer_col) = a(0) + a(1)*xi + a(2)*yi + sum;
-            
+
             std::cerr << std::fixed;
             std::cerr << std::setprecision(3)
                       << std::left
@@ -428,7 +428,168 @@ Eigen::MatrixXd MongusFilter::TPS(PointViewPtr control, double cell_size)
                       << std::endl;
         }
     }
-    
+
+    return S;
+}
+
+Eigen::MatrixXd MongusFilter::TPS(Eigen::MatrixXd cx, Eigen::MatrixXd cy, Eigen::MatrixXd cz, double cell_size)
+{
+    using namespace Eigen;
+
+    int num_rows = cz.rows();
+    int num_cols = cz.cols();
+    int max_row = m_bounds.miny + num_rows * cell_size;
+
+    MatrixXd S = MatrixXd::Zero(num_rows, num_cols);
+
+    auto clamp = [](double t, double min, double max)
+    {
+        return ((t < min) ? min : ((t > max) ? max : t));
+    };
+
+    for (int outer_row = 0; outer_row < num_rows; ++outer_row)
+    {
+        for (int outer_col = 0; outer_col < num_cols; ++outer_col)
+        {
+            // radius of 3, giving an effective 7x7 neighborhood, according to
+            // the paper
+            int radius = 3;
+
+            int col_start = clamp(outer_col-radius, 0, num_cols-1);
+            int col_end = clamp(outer_col+radius, 0, num_cols-1);
+            int col_size = col_end - col_start + 1;
+            int row_start = clamp(outer_row-radius, 0, num_rows-1);
+            int row_end = clamp(outer_row+radius, 0, num_rows-1);
+            int row_size = row_end - row_start + 1;
+
+            MatrixXd Xn = cx.block(row_start, col_start, row_size, col_size);
+            MatrixXd Yn = cy.block(row_start, col_start, row_size, col_size);
+            MatrixXd Hn = cz.block(row_start, col_start, row_size, col_size);
+
+            int nsize = Hn.size();
+            VectorXd T = VectorXd::Zero(nsize);
+            MatrixXd P = MatrixXd::Zero(nsize, 3);
+            MatrixXd K = MatrixXd::Zero(nsize, nsize);
+
+            for (int id = 0; id < Hn.size(); ++id)
+            {
+                double xj = Xn(id);
+                if (std::isnan(xj))
+                    continue;
+                double yj = Yn(id);
+                if (std::isnan(yj))
+                    continue;
+                double zj = Hn(id);
+                if (zj == std::numeric_limits<double>::max())
+                    continue;
+                T(id) = zj;
+                P.row(id) << 1, xj, yj;
+                PointId kk = 0;
+                for (int id2 = 0; id2 < Hn.size(); ++id2)
+                {
+                    if (id == id2)
+                        continue;
+                    double xk = Xn(id2);
+                    if (std::isnan(xk))
+                        continue;
+                    double yk = Yn(id2);
+                    if (std::isnan(yk))
+                        continue;
+                    double rsqr = (xj - xk) * (xj - xk) + (yj - yk) * (yj - yk);
+                    if (rsqr == 0.0)
+                        continue;
+                    K(id, id2) = rsqr * std::log10(std::sqrt(rsqr));
+                    kk++;
+                }
+            }
+
+            MatrixXd A = MatrixXd::Zero(nsize+3, nsize+3);
+            A.block(0,0,nsize,nsize) = K;
+            A.block(0,nsize,nsize,3) = P;
+            A.block(nsize,0,3,nsize) = P.transpose();
+
+            VectorXd b = VectorXd::Zero(nsize+3);
+            b.head(nsize) = T;
+
+            VectorXd x = A.fullPivHouseholderQr().solve(b);
+
+            Vector3d a = x.tail(3);
+            VectorXd w = x.head(nsize);
+
+            double sum = 0.0;
+            double xi = m_bounds.minx + outer_col * cell_size + cell_size / 2;
+            double xi2 = cx(outer_row, outer_col);
+            double yi = max_row - (outer_row * cell_size + cell_size / 2);
+            double yi2 = cy(outer_row, outer_col);
+            double zi = cz(outer_row, outer_col);
+            if (zi == std::numeric_limits<double>::max())
+                continue;
+            for (int j = 0; j < nsize; ++j)
+            {
+                double xj = Xn(j);
+                if (std::isnan(xj))
+                    continue;
+                double yj = Yn(j);
+                if (std::isnan(yj))
+                    continue;
+                double rsqr = (xj - xi) * (xj - xi) + (yj - yi) * (yj - yi);
+                if (rsqr == 0.0)
+                    continue;
+                sum += w(j) * rsqr * std::log10(std::sqrt(rsqr));
+            }
+
+            S(outer_row, outer_col) = a(0) + a(1)*xi + a(2)*yi + sum;
+
+            // std::cerr << std::fixed;
+            // std::cerr << std::setprecision(3)
+            //           << std::left
+            //           << "S(" << outer_row << "," << outer_col << "): "
+            //           << std::setw(10)
+            //           << S(outer_row, outer_col)
+            //           << std::setw(3)
+            //           << "\tz: "
+            //           << std::setw(10)
+            //           << zi
+            //           << std::setw(7)
+            //           << "\tzdiff: "
+            //           << std::setw(5)
+            //           << zi - S(outer_row, outer_col)
+            //           << std::setw(7)
+            //           << "\txdiff: "
+            //           << std::setw(5)
+            //           << xi2 - xi
+            //           << std::setw(7)
+            //           << "\tydiff: "
+            //           << std::setw(5)
+            //           << yi2 - yi
+            //           << std::setw(7)
+            //           << "\t# pts: "
+            //           << std::setw(3)
+            //           << nsize
+            //           << std::setw(5)
+            //           << "\tsum: "
+            //           << std::setw(10)
+            //           << sum
+            //           << std::setw(9)
+            //           << "\tw.sum(): "
+            //           << std::setw(5)
+            //           << w.sum()
+            //           << std::setw(6)
+            //           << "\txsum: "
+            //           << std::setw(5)
+            //           << w.dot(P.col(1))
+            //           << std::setw(6)
+            //           << "\tysum: "
+            //           << std::setw(5)
+            //           << w.dot(P.col(2))
+            //           << std::setw(3)
+            //           << "\ta: "
+            //           << std::setw(8)
+            //           << a.transpose()
+            //           << std::endl;
+        }
+    }
+
     return S;
 }
 
@@ -505,20 +666,20 @@ PointViewSet MongusFilter::run(PointViewPtr input)
     m_numRows = static_cast<int>(ceil((m_bounds.maxy - m_bounds.miny)/m_cellSize)) + 1;
     m_maxRow = m_bounds.miny + m_numRows * m_cellSize;
 
-    auto oz = morphOpen(input, 11);
+    auto mo = morphOpen(input, 11);
 
     // Z now contains the opened values
     for (PointId i = 0; i < input->size(); ++i)
     {
-        input->setField(Dimension::Id::Z, i, oz[i]);
+        input->setField(Dimension::Id::Z, i, mo[i]);
     }
 
-    auto cz = morphClose(input, 9);
+    auto mc = morphClose(input, 9);
 
     // Z now contains the closed values
     for (PointId i = 0; i < input->size(); ++i)
     {
-        input->setField(Dimension::Id::Z, i, cz[i]);
+        input->setField(Dimension::Id::Z, i, mc[i]);
     }
 
     // compare morphological values to orignals and replace low points
@@ -537,35 +698,26 @@ PointViewSet MongusFilter::run(PointViewPtr input)
         }
     }
 
-    // control point selection
-    // start at m_cellSize?, then downsample by 2 with each successive level
-    // lowest points from control points
+    //----------------
 
-    // TPS
-    double cs = 1.0;
-    auto S = TPS(input, cs);
-    
-    double half_cs = cs / 2;
-    
-    // filter
-    // actually interwined with TPS, as we filter at each level in the hierarchy
-    
-    // determine size of H and S
-    int num_cols = static_cast<int>(ceil((m_bounds.maxx - m_bounds.minx)/half_cs)) + 1;
-    int num_rows = static_cast<int>(ceil((m_bounds.maxy - m_bounds.miny)/half_cs)) + 1;
-    int max_row = m_bounds.miny + num_rows * half_cs;
+    // create control points matrix at 1m cell size
+    double initCellSize = 1.0;
+
+    int num_cols = static_cast<int>(ceil((m_bounds.maxx - m_bounds.minx)/initCellSize)) + 1;
+    int num_rows = static_cast<int>(ceil((m_bounds.maxy - m_bounds.miny)/initCellSize)) + 1;
+    int max_row = m_bounds.miny + num_rows * initCellSize;
 
     using namespace Eigen;
-    
-    // initialize H and S
-    MatrixXd H = MatrixXd::Constant(num_rows, num_cols, std::numeric_limits<double>::max());
+
+    MatrixXd cx = MatrixXd::Constant(num_rows, num_cols, std::numeric_limits<double>::quiet_NaN());
+    MatrixXd cy = MatrixXd::Constant(num_rows, num_cols, std::numeric_limits<double>::quiet_NaN());
+    MatrixXd cz = MatrixXd::Constant(num_rows, num_cols, std::numeric_limits<double>::max());
 
     auto clamp = [](double t, double min, double max)
     {
         return ((t < min) ? min : ((t > max) ? max : t));
     };
 
-    // populate H with min Z values
     for (PointId i = 0; i < input->size(); ++i)
     {
         using namespace Dimension::Id;
@@ -573,111 +725,355 @@ PointViewSet MongusFilter::run(PointViewPtr input)
         double y = input->getFieldAs<double>(Y, i);
         double z = input->getFieldAs<double>(Z, i);
 
-        int xIndex = clamp(static_cast<int>(floor((x - m_bounds.minx) / half_cs)), 0, num_cols-1);
-        int yIndex = clamp(static_cast<int>(floor((max_row - y) / half_cs)), 0, num_rows-1);
+        int xIndex =
+            clamp(static_cast<int>(floor((x - m_bounds.minx) / initCellSize)),
+                  0, num_cols-1);
+        int yIndex =
+            clamp(static_cast<int>(floor((max_row - y) / initCellSize)),
+                  0, num_rows-1);
 
-        if (z < H(yIndex, xIndex))
-            H(yIndex, xIndex) = z;
-    }
-    
-    MatrixXd R = MatrixXd::Zero(num_rows, num_cols);
-    for (int r = 0; r < H.rows(); ++r)
-    {
-        for (int c = 0; c < H.cols(); ++c)
+        if (z < cz(yIndex, xIndex))
         {
-            if (H(r, c) == std::numeric_limits<double>::max())
+            cx(yIndex, xIndex) = x;
+            cy(yIndex, xIndex) = y;
+            cz(yIndex, xIndex) = z;
+        }
+    }
+
+    // downsample control at max_level
+    int level = 6;
+    double newCellSize = std::pow(2, level-1);
+    int new_num_rows = ceil(num_rows / newCellSize);
+    int new_num_cols = ceil(num_cols / newCellSize);
+    MatrixXd dcx = MatrixXd::Constant(new_num_rows, new_num_cols, std::numeric_limits<double>::quiet_NaN());
+    MatrixXd dcy = MatrixXd::Constant(new_num_rows, new_num_cols, std::numeric_limits<double>::quiet_NaN());
+    MatrixXd dcz = MatrixXd::Constant(new_num_rows, new_num_cols, std::numeric_limits<double>::max());
+
+    for (int r = 0; r < cz.rows(); ++r)
+    {
+        for (int c = 0; c < cz.cols(); ++c)
+        {
+            if (cz(r, c) == std::numeric_limits<double>::max())
                 continue;
-                
-            // compute diff between this and corresponding S
-            int rr = std::floor(r/2);
-            int cc = std::floor(c/2);
-            // std::cerr << H(r, c) << "\t" << S(rr, cc) << "\t" << H(r, c) - S(rr, cc) << std::endl;
-            R(r, c) = H(r, c) - S(rr, cc);
-        }
-    }
-    
-    // top hat on R
-    // first open R, then diff
-    // first min, then max of min
-    MatrixXd minZ = MatrixXd::Constant(num_rows, num_cols, std::numeric_limits<double>::max());
-    MatrixXd maxZ = MatrixXd::Constant(num_rows, num_cols, std::numeric_limits<double>::lowest());
-    for (int r = 0; r < R.rows(); ++r)
-    {
-        for (int c = 0; c < R.cols(); ++c)
-        {
-            int radius = 1;
-            for (int row = r-radius; row <= r+radius; ++row)
+
+            int rr = std::floor(r/newCellSize);
+            int cc = std::floor(c/newCellSize);
+
+            if (cz(r, c) < dcz(rr, cc))
             {
-                if (row < 0 || row > (num_rows-1))
-                    continue;
-                for (int col = c-radius; col <= c+radius; ++col)
-                {
-                    if (col < 0 || col > (num_cols-1))
-                        continue;
-                    if (R(row, col) < minZ(r, c))
-                        minZ(r, c) = R(row, col);
-                }
+                dcx(rr, cc) = cx(r, c);
+                dcy(rr, cc) = cy(r, c);
+                dcz(rr, cc) = cz(r, c);
             }
         }
     }
-    for (int r = 0; r < R.rows(); ++r)
+
+    // compute TPS at max_level
+
+    auto surface = TPS(dcx, dcy, dcz, newCellSize);
+
+    // for each level counting back to 0
+    for (int l = level-1; l > 0; --l)
     {
-        for (int c = 0; c < R.cols(); ++c)
+        // downsample control at level
+        double newCellSize = std::pow(2, l-1);
+        int new_num_rows = ceil(num_rows / newCellSize);
+        int new_num_cols = ceil(num_cols / newCellSize);
+        
+        std::cerr << l << "\t" << new_num_rows << "\t" << new_num_cols << "\t" << newCellSize << std::endl;
+        
+        MatrixXd dcx =
+            MatrixXd::Constant(new_num_rows, new_num_cols,
+                               std::numeric_limits<double>::quiet_NaN());
+        MatrixXd dcy =
+            MatrixXd::Constant(new_num_rows, new_num_cols,
+                               std::numeric_limits<double>::quiet_NaN());
+        MatrixXd dcz =
+            MatrixXd::Constant(new_num_rows, new_num_cols,
+                               std::numeric_limits<double>::max());
+
+        for (int r = 0; r < cz.rows(); ++r)
         {
-            int radius = 1;
-            for (int row = r-radius; row <= r+radius; ++row)
+            for (int c = 0; c < cz.cols(); ++c)
             {
-                if (row < 0 || row > (num_rows-1))
+                if (cz(r, c) == std::numeric_limits<double>::max())
                     continue;
-                for (int col = c-radius; col <= c+radius; ++col)
+
+                int rr = std::floor(r/newCellSize);
+                int cc = std::floor(c/newCellSize);
+                // std::cerr << rr << "\t" << cc << std::endl;
+
+                if (cz(r, c) < dcz(rr, cc))
                 {
-                    if (col < 0 || col > (num_cols-1))
-                        continue;
-                    if (minZ(row, col) > maxZ(r, c))
-                        maxZ(r, c) = minZ(row, col);
+                    dcx(rr, cc) = cx(r, c);
+                    dcy(rr, cc) = cy(r, c);
+                    dcz(rr, cc) = cz(r, c);
                 }
             }
         }
-    }
-    MatrixXd T = R - maxZ;
-    // std::cerr << R << std::endl;
-    // std::cerr << maxZ << std::endl;
-    // std::cerr << T << std::endl;
-    
-    MatrixXd t = MatrixXd::Zero(num_rows, num_cols);
-    for (int r = 0; r < T.rows(); ++r)
-    {
-        for (int c = 0; c < T.cols(); ++c)
+        
+        // std::cerr << "top hat\n";
+
+        // apply top hat filter against TPS
+        // compute residual
+        MatrixXd R = MatrixXd::Zero(new_num_rows, new_num_cols);
+        for (int r = 0; r < dcz.rows(); ++r)
         {
-            int radius = 2;
-            double M1 = 0;
-            double M2 = 0;
-            int n = 0;
-            for (int row = r-radius; row <= r+radius; ++row)
+            for (int c = 0; c < dcz.cols(); ++c)
             {
-                if (row < 0 || row > (num_rows-1))
+                if (dcz(r, c) == std::numeric_limits<double>::max())
                     continue;
-                for (int col = c-radius; col <= c+radius; ++col)
+
+                // compute diff between this and corresponding S
+                int rr = std::floor(r/2);
+                int cc = std::floor(c/2);
+                // std::cerr << H(r, c) << "\t" << S(rr, cc) << "\t" << H(r, c) - S(rr, cc) << std::endl;
+                R(r, c) = dcz(r, c) - surface(rr, cc);
+            }
+        }
+        // std::cerr << R << std::endl;
+
+        // top hat on R
+        // first open R, then diff
+        // first min, then max of min
+        MatrixXd minZ =
+            MatrixXd::Constant(new_num_rows, new_num_cols,
+                               std::numeric_limits<double>::max());
+        MatrixXd maxZ =
+            MatrixXd::Constant(new_num_rows, new_num_cols,
+                               std::numeric_limits<double>::lowest());
+        for (int r = 0; r < minZ.rows(); ++r)
+        {
+            for (int c = 0; c < minZ.cols(); ++c)
+            {
+                int radius = 1;
+                for (int row = r-radius; row <= r+radius; ++row)
                 {
-                    if (col < 0 || col > (num_cols-1))
+                    if (row < 0 || row > (new_num_rows-1))
                         continue;
-                    int n1 = n;
-                    n++;
-                    double delta = T(row, col);
-                    double delta_n = delta / n;
-                    double term1 = delta * delta_n * n1;
-                    M1 += delta_n;
-                    M2 += term1;
+                    for (int col = c-radius; col <= c+radius; ++col)
+                    {
+                        if (col < 0 || col > (new_num_cols-1))
+                            continue;
+                        if (R(row, col) < minZ(r, c))
+                            minZ(r, c) = R(row, col);
+                    }
                 }
             }
-            // std::cerr << M1 << "\t" << std::sqrt(M2/(n-1)) << std::endl;
-            t(r, c) = M1 + 3 * std::sqrt(M2/(n-1));
-            if (T(r,c) > t(r,c))
-                std::cerr << T(r, c) << " > " << t(r, c) << " at (" << r << "," << c << ")" << std::endl;
         }
+        for (int r = 0; r < minZ.rows(); ++r)
+        {
+            for (int c = 0; c < minZ.cols(); ++c)
+            {
+                int radius = 1;
+                for (int row = r-radius; row <= r+radius; ++row)
+                {
+                    if (row < 0 || row > (new_num_rows-1))
+                        continue;
+                    for (int col = c-radius; col <= c+radius; ++col)
+                    {
+                        if (col < 0 || col > (new_num_cols-1))
+                            continue;
+                        if (minZ(row, col) > maxZ(r, c))
+                            maxZ(r, c) = minZ(row, col);
+                    }
+                }
+            }
+        }
+        MatrixXd T = R - maxZ;
+        // std::cerr << R << std::endl;
+        // std::cerr << maxZ << std::endl;
+        // std::cerr << T << std::endl;
+
+        MatrixXd t = MatrixXd::Zero(new_num_rows, new_num_cols);
+        for (int r = 0; r < T.rows(); ++r)
+        {
+            for (int c = 0; c < T.cols(); ++c)
+            {
+                int radius = 2;
+                double M1 = 0;
+                double M2 = 0;
+                int n = 0;
+                for (int row = r-radius; row <= r+radius; ++row)
+                {
+                    if (row < 0 || row > (new_num_rows-1))
+                        continue;
+                    for (int col = c-radius; col <= c+radius; ++col)
+                    {
+                        if (col < 0 || col > (new_num_cols-1))
+                            continue;
+                        int n1 = n;
+                        n++;
+                        double delta = T(row, col);
+                        double delta_n = delta / n;
+                        double term1 = delta * delta_n * n1;
+                        M1 += delta_n;
+                        M2 += term1;
+                    }
+                }
+                // std::cerr << M1 << "\t" << std::sqrt(M2/(n-1)) << std::endl;
+                t(r, c) = M1 + 3 * std::sqrt(M2/(n-1));
+                if (T(r,c) > t(r,c))
+                {
+                    std::cerr << T(r, c) << " > " << t(r, c) << " at (" << r << "," << c << ")" << std::endl;
+                    dcz(r, c) = std::numeric_limits<double>::max();
+                }
+            }
+        }
+        // std::cerr << t << std::endl;
+
+        // compute TPS with update control at level
+        surface.resize(dcz.rows(), dcz.cols());
+        surface = TPS(dcx, dcy, dcz, newCellSize);
     }
-    // std::cerr << t << std::endl;
     
+    std::cerr << "done (for now)\n";
+
+    // apply final filtering (top hat) using raw points against TPS
+
+    //----------------
+
+    // // control point selection
+    // // start at m_cellSize?, then downsample by 2 with each successive level
+    // // lowest points from control points
+    //
+    // // TPS
+    // double cs = 1.0;
+    // auto S = TPS(input, cs);
+    //
+    // double half_cs = cs / 2;
+    //
+    // // filter
+    // // actually interwined with TPS, as we filter at each level in the hierarchy
+    //
+    // // determine size of H and S
+    // int num_cols = static_cast<int>(ceil((m_bounds.maxx - m_bounds.minx)/half_cs)) + 1;
+    // int num_rows = static_cast<int>(ceil((m_bounds.maxy - m_bounds.miny)/half_cs)) + 1;
+    // int max_row = m_bounds.miny + num_rows * half_cs;
+    //
+    // using namespace Eigen;
+    //
+    // // initialize H and S
+    // MatrixXd H = MatrixXd::Constant(num_rows, num_cols, std::numeric_limits<double>::max());
+    //
+    // auto clamp = [](double t, double min, double max)
+    // {
+    //     return ((t < min) ? min : ((t > max) ? max : t));
+    // };
+    //
+    // // populate H with min Z values
+    // for (PointId i = 0; i < input->size(); ++i)
+    // {
+    //     using namespace Dimension::Id;
+    //     double x = input->getFieldAs<double>(X, i);
+    //     double y = input->getFieldAs<double>(Y, i);
+    //     double z = input->getFieldAs<double>(Z, i);
+    //
+    //     int xIndex = clamp(static_cast<int>(floor((x - m_bounds.minx) / half_cs)), 0, num_cols-1);
+    //     int yIndex = clamp(static_cast<int>(floor((max_row - y) / half_cs)), 0, num_rows-1);
+    //
+    //     if (z < H(yIndex, xIndex))
+    //         H(yIndex, xIndex) = z;
+    // }
+    //
+    // MatrixXd R = MatrixXd::Zero(num_rows, num_cols);
+    // for (int r = 0; r < H.rows(); ++r)
+    // {
+    //     for (int c = 0; c < H.cols(); ++c)
+    //     {
+    //         if (H(r, c) == std::numeric_limits<double>::max())
+    //             continue;
+    //
+    //         // compute diff between this and corresponding S
+    //         int rr = std::floor(r/2);
+    //         int cc = std::floor(c/2);
+    //         // std::cerr << H(r, c) << "\t" << S(rr, cc) << "\t" << H(r, c) - S(rr, cc) << std::endl;
+    //         R(r, c) = H(r, c) - S(rr, cc);
+    //     }
+    // }
+    //
+    // // top hat on R
+    // // first open R, then diff
+    // // first min, then max of min
+    // MatrixXd minZ = MatrixXd::Constant(num_rows, num_cols, std::numeric_limits<double>::max());
+    // MatrixXd maxZ = MatrixXd::Constant(num_rows, num_cols, std::numeric_limits<double>::lowest());
+    // for (int r = 0; r < R.rows(); ++r)
+    // {
+    //     for (int c = 0; c < R.cols(); ++c)
+    //     {
+    //         int radius = 1;
+    //         for (int row = r-radius; row <= r+radius; ++row)
+    //         {
+    //             if (row < 0 || row > (num_rows-1))
+    //                 continue;
+    //             for (int col = c-radius; col <= c+radius; ++col)
+    //             {
+    //                 if (col < 0 || col > (num_cols-1))
+    //                     continue;
+    //                 if (R(row, col) < minZ(r, c))
+    //                     minZ(r, c) = R(row, col);
+    //             }
+    //         }
+    //     }
+    // }
+    // for (int r = 0; r < R.rows(); ++r)
+    // {
+    //     for (int c = 0; c < R.cols(); ++c)
+    //     {
+    //         int radius = 1;
+    //         for (int row = r-radius; row <= r+radius; ++row)
+    //         {
+    //             if (row < 0 || row > (num_rows-1))
+    //                 continue;
+    //             for (int col = c-radius; col <= c+radius; ++col)
+    //             {
+    //                 if (col < 0 || col > (num_cols-1))
+    //                     continue;
+    //                 if (minZ(row, col) > maxZ(r, c))
+    //                     maxZ(r, c) = minZ(row, col);
+    //             }
+    //         }
+    //     }
+    // }
+    // MatrixXd T = R - maxZ;
+    // // std::cerr << R << std::endl;
+    // // std::cerr << maxZ << std::endl;
+    // // std::cerr << T << std::endl;
+    //
+    // MatrixXd t = MatrixXd::Zero(num_rows, num_cols);
+    // for (int r = 0; r < T.rows(); ++r)
+    // {
+    //     for (int c = 0; c < T.cols(); ++c)
+    //     {
+    //         int radius = 2;
+    //         double M1 = 0;
+    //         double M2 = 0;
+    //         int n = 0;
+    //         for (int row = r-radius; row <= r+radius; ++row)
+    //         {
+    //             if (row < 0 || row > (num_rows-1))
+    //                 continue;
+    //             for (int col = c-radius; col <= c+radius; ++col)
+    //             {
+    //                 if (col < 0 || col > (num_cols-1))
+    //                     continue;
+    //                 int n1 = n;
+    //                 n++;
+    //                 double delta = T(row, col);
+    //                 double delta_n = delta / n;
+    //                 double term1 = delta * delta_n * n1;
+    //                 M1 += delta_n;
+    //                 M2 += term1;
+    //             }
+    //         }
+    //         // std::cerr << M1 << "\t" << std::sqrt(M2/(n-1)) << std::endl;
+    //         t(r, c) = M1 + 3 * std::sqrt(M2/(n-1));
+    //         if (T(r,c) > t(r,c))
+    //             std::cerr << T(r, c) << " > " << t(r, c) << " at (" << r << "," << c << ")" << std::endl;
+    //     }
+    // }
+    // // std::cerr << t << std::endl;
+
 
     viewSet.insert(input);
 

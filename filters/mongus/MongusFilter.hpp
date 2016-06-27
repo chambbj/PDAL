@@ -78,6 +78,7 @@ private:
     std::vector<double> morphClose(PointViewPtr view, int radius);
     std::vector<double> thinPlateSpline(PointViewPtr view, int radius);
     Eigen::MatrixXd TPS(PointViewPtr control, double cell_size);
+    Eigen::MatrixXd TPS(Eigen::MatrixXd cx, Eigen::MatrixXd cy, Eigen::MatrixXd cz, double cell_size);
     PointIdHash calculateHash(PointViewPtr view);
     std::vector<PointId> processGround(PointViewPtr view);
     virtual PointViewSet run(PointViewPtr view);
