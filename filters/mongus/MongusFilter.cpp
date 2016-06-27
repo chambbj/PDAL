@@ -32,25 +32,8 @@
 * OF SUCH DAMAGE.
 ****************************************************************************/
 
-/*
- * 1) Initialization
- *
- *    Open at window size of 11
- *    Close at window size of 9
- *    Replace points with z'-z >= 1m
- *
- * 2) Control point selection
- *
- *    Form n levels of hierarchy, with lowest elevation points from the
- *    initialization step seeding the grids.
- *
- * 3) Thin plate spline surface interpolation
- * 4) Filtering
- */
-
 #include "MongusFilter.hpp"
 
-#include <pdal/KDIndex.hpp>
 #include <pdal/pdal_macros.hpp>
 #include <pdal/util/ProgramArgs.hpp>
 
@@ -62,7 +45,7 @@ namespace pdal
 {
 
 static PluginInfo const s_info =
-    PluginInfo("filters.mongus", "Progressive morphological filter",
+    PluginInfo("filters.mongus", "Mongus and Zalik (2012)",
                "http://pdal.io/stages/filters.mongus.html");
 
 CREATE_STATIC_PLUGIN(1, 0, MongusFilter, Filter, s_info)
@@ -72,17 +55,20 @@ std::string MongusFilter::getName() const
     return s_info.name;
 }
 
-
 void MongusFilter::addArgs(ProgramArgs& args)
 {
     args.add("classify", "Apply classification labels?", m_classify, true);
     args.add("extract", "Extract ground returns?", m_extract);
 }
 
-
 void MongusFilter::addDimensions(PointLayoutPtr layout)
 {
     layout->registerDim(Dimension::Id::Classification);
+}
+
+int MongusFilter::clamp(int t, int min, int max)
+{
+    return ((t < min) ? min : ((t > max) ? max : t));
 }
 
 std::vector<double> MongusFilter::morphOpen(PointViewPtr view, int radius)
@@ -110,23 +96,21 @@ std::vector<double> MongusFilter::morphOpen(PointViewPtr view, int radius)
         double y = view->getFieldAs<double>(Dimension::Id::Y, i);
 
         // get hash for current point and neighboring cells, gather PointIds
-        auto clamp = [](double t, double min, double max)
-        {
-            return ((t < min) ? min : ((t > max) ? max : t));
-        };
 
-        int xIndex = clamp(static_cast<int>(floor((x - m_bounds.minx) / m_cellSize)), 0, m_numCols-1);
-        int yIndex = clamp(static_cast<int>(floor((m_maxRow - y) / m_cellSize)), 0, m_numRows-1);
+        int c = clamp(static_cast<int>(floor((x - m_bounds.minx) / m_cellSize)), 0, m_numCols-1);
+        int r = clamp(static_cast<int>(floor((m_maxRow - y) / m_cellSize)), 0, m_numRows-1);
 
         std::vector<PointId> ids;
-        for (int row = yIndex-radius; row <= yIndex+radius; ++row)
+
+        int col_start = clamp(c-radius, 0, m_numCols-1);
+        int col_end = clamp(c+radius, 0, m_numCols-1);
+        int row_start = clamp(r-radius, 0, m_numRows-1);
+        int row_end = clamp(r+radius, 0, m_numRows-1);
+
+        for (int row = row_start; row <= row_end; ++row)
         {
-            if (row < 0 || row > (m_numRows-1))
-                continue;
-            for (int col = xIndex-radius; col <= xIndex+radius; ++col)
+            for (int col = col_start; col <= col_end; ++col)
             {
-                if (col < 0 || col > (m_numCols-1))
-                    continue;
                 int id = row * m_numCols + col;
                 auto partial = hash[id];
                 if (partial.size())
@@ -135,7 +119,6 @@ std::vector<double> MongusFilter::morphOpen(PointViewPtr view, int radius)
                 }
             }
         }
-        // log()->get(LogLevel::Debug3) << ids.size() << std::endl;
 
         neighborMap[i] = ids;
         double localMin(std::numeric_limits<double>::max());
@@ -190,23 +173,21 @@ std::vector<double> MongusFilter::morphClose(PointViewPtr view, int radius)
         double y = view->getFieldAs<double>(Dimension::Id::Y, i);
 
         // get hash for current point and neighboring cells, gather PointIds
-        auto clamp = [](double t, double min, double max)
-        {
-            return ((t < min) ? min : ((t > max) ? max : t));
-        };
 
-        int xIndex = clamp(static_cast<int>(floor((x - m_bounds.minx) / m_cellSize)), 0, m_numCols-1);
-        int yIndex = clamp(static_cast<int>(floor((m_maxRow - y) / m_cellSize)), 0, m_numRows-1);
+        int c = clamp(static_cast<int>(floor((x - m_bounds.minx) / m_cellSize)), 0, m_numCols-1);
+        int r = clamp(static_cast<int>(floor((m_maxRow - y) / m_cellSize)), 0, m_numRows-1);
 
         std::vector<PointId> ids;
-        for (int row = yIndex-radius; row <= yIndex+radius; ++row)
+
+        int col_start = clamp(c-radius, 0, m_numCols-1);
+        int col_end = clamp(c+radius, 0, m_numCols-1);
+        int row_start = clamp(r-radius, 0, m_numRows-1);
+        int row_end = clamp(r+radius, 0, m_numRows-1);
+
+        for (int row = row_start; row <= row_end; ++row)
         {
-            if (row < 0 || row > (m_numRows-1))
-                continue;
-            for (int col = xIndex-radius; col <= xIndex+radius; ++col)
+            for (int col = col_start; col <= col_end; ++col)
             {
-                if (col < 0 || col > (m_numCols-1))
-                    continue;
                 int id = row * m_numCols + col;
                 auto partial = hash[id];
                 if (partial.size())
@@ -215,7 +196,6 @@ std::vector<double> MongusFilter::morphClose(PointViewPtr view, int radius)
                 }
             }
         }
-        // log()->get(LogLevel::Debug3) << ids.size() << std::endl;
 
         neighborMap[i] = ids;
         double localMax(std::numeric_limits<double>::lowest());
@@ -254,11 +234,6 @@ Eigen::MatrixXd MongusFilter::TPS(Eigen::MatrixXd cx, Eigen::MatrixXd cy, Eigen:
     int max_row = m_bounds.miny + num_rows * cell_size;
 
     MatrixXd S = MatrixXd::Zero(num_rows, num_cols);
-
-    auto clamp = [](double t, double min, double max)
-    {
-        return ((t < min) ? min : ((t > max) ? max : t));
-    };
 
     for (int outer_row = 0; outer_row < num_rows; ++outer_row)
     {
@@ -419,16 +394,10 @@ PointIdHash MongusFilter::calculateHash(PointViewPtr view)
         double x = view->getFieldAs<double>(Dimension::Id::X, i);
         double y = view->getFieldAs<double>(Dimension::Id::Y, i);
 
-        auto clamp = [](double t, double min, double max)
-        {
-            return ((t < min) ? min : ((t > max) ? max : t));
-        };
+        int c = clamp(static_cast<int>(floor((x - m_bounds.minx) / m_cellSize)), 0, m_numCols-1);
+        int r = clamp(static_cast<int>(floor((m_maxRow - y) / m_cellSize)), 0, m_numRows-1);
 
-        int xIndex = clamp(static_cast<int>(floor((x - m_bounds.minx) / m_cellSize)), 0, m_numCols-1);
-        int yIndex = clamp(static_cast<int>(floor((m_maxRow - y) / m_cellSize)), 0, m_numRows-1);
-        // log()->get(LogLevel::Debug5) << xIndex << ", " << yIndex << std::endl;
-
-        int id = yIndex * m_numCols + xIndex;
+        int id = r * m_numCols + c;
 
         auto ids = hash[id];
         ids.push_back(i);
@@ -443,8 +412,6 @@ std::vector<PointId> MongusFilter::processGround(PointViewPtr view)
     point_count_t np(view->size());
 
     std::vector<PointId> groundIdx;
-    // for (PointId i = 0; i < np; ++i)
-    //     groundIdx.push_back(i);
 
     // initialization
 
@@ -484,18 +451,9 @@ std::vector<PointId> MongusFilter::processGround(PointViewPtr view)
     {
         auto diff = view->getFieldAs<double>(Dimension::Id::Z, i) - originalZ[i];
 
-        if (diff >= 1.0)
-        {
-            // std::cerr << diff << std::endl;
-            continue;
-        }
-        else
-        {
+        if (diff < 1.0)
             view->setField(Dimension::Id::Z, i, originalZ[i]);
-        }
     }
-
-    //----------------
 
     // create control points matrix at 1m cell size
     double initCellSize = 1.0;
@@ -510,11 +468,6 @@ std::vector<PointId> MongusFilter::processGround(PointViewPtr view)
     MatrixXd cy = MatrixXd::Constant(num_rows, num_cols, std::numeric_limits<double>::quiet_NaN());
     MatrixXd cz = MatrixXd::Constant(num_rows, num_cols, std::numeric_limits<double>::max());
 
-    auto clamp = [](double t, double min, double max)
-    {
-        return ((t < min) ? min : ((t > max) ? max : t));
-    };
-
     for (PointId i = 0; i < view->size(); ++i)
     {
         using namespace Dimension::Id;
@@ -522,18 +475,18 @@ std::vector<PointId> MongusFilter::processGround(PointViewPtr view)
         double y = view->getFieldAs<double>(Y, i);
         double z = view->getFieldAs<double>(Z, i);
 
-        int xIndex =
+        int c =
             clamp(static_cast<int>(floor((x - m_bounds.minx) / initCellSize)),
                   0, num_cols-1);
-        int yIndex =
+        int r =
             clamp(static_cast<int>(floor((max_row - y) / initCellSize)),
                   0, num_rows-1);
 
-        if (z < cz(yIndex, xIndex))
+        if (z < cz(r, c))
         {
-            cx(yIndex, xIndex) = x;
-            cy(yIndex, xIndex) = y;
-            cz(yIndex, xIndex) = z;
+            cx(r, c) = x;
+            cy(r, c) = y;
+            cz(r, c) = z;
         }
     }
 
@@ -609,7 +562,7 @@ std::vector<PointId> MongusFilter::processGround(PointViewPtr view)
             continue;
         groundIdx.push_back(i);
     }
-    
+
     return groundIdx;
 
     // temporary
@@ -711,14 +664,15 @@ Eigen::MatrixXd MongusFilter::matrixOpen(Eigen::MatrixXd data, int radius)
     {
         for (int c = 0; c < minZ.cols(); ++c)
         {
-            for (int row = r-radius; row <= r+radius; ++row)
+            int col_start = clamp(c-radius, 0, new_num_cols-1);
+            int col_end = clamp(c+radius, 0, new_num_cols-1);
+            int row_start = clamp(r-radius, 0, new_num_rows-1);
+            int row_end = clamp(r+radius, 0, new_num_rows-1);
+
+            for (int row = row_start; row <= row_end; ++row)
             {
-                if (row < 0 || row > (new_num_rows-1))
-                    continue;
-                for (int col = c-radius; col <= c+radius; ++col)
+                for (int col = col_start; col <= col_end; ++col)
                 {
-                    if (col < 0 || col > (new_num_cols-1))
-                        continue;
                     if ((row-r)*(row-r)+(col-c)*(col-c) > radius*radius)
                         continue;
                     if (data(row, col) < minZ(r, c))
@@ -733,153 +687,148 @@ Eigen::MatrixXd MongusFilter::matrixOpen(Eigen::MatrixXd data, int radius)
         {
             for (int row = r-radius; row <= r+radius; ++row)
             {
-                if (row < 0 || row > (new_num_rows-1))
-                    continue;
-                for (int col = c-radius; col <= c+radius; ++col)
+                int col_start = clamp(c-radius, 0, new_num_cols-1);
+                int col_end = clamp(c+radius, 0, new_num_cols-1);
+                int row_start = clamp(r-radius, 0, new_num_rows-1);
+                int row_end = clamp(r+radius, 0, new_num_rows-1);
+
+                for (int row = row_start; row <= row_end; ++row)
                 {
-                    if (col < 0 || col > (new_num_cols-1))
-                        continue;
-                    if ((row-r)*(row-r)+(col-c)*(col-c) > radius*radius)
-                        continue;
-                    if (minZ(row, col) > maxZ(r, c))
-                        maxZ(r, c) = minZ(row, col);
+                    for (int col = col_start; col <= col_end; ++col)
+                    {
+                        if ((row-r)*(row-r)+(col-c)*(col-c) > radius*radius)
+                            continue;
+                        if (minZ(row, col) > maxZ(r, c))
+                            maxZ(r, c) = minZ(row, col);
+                    }
+                }
+            }
+        }
+
+        return maxZ;
+    }
+
+    Eigen::MatrixXd MongusFilter::computeThresholds(Eigen::MatrixXd T, int radius)
+    {
+        using namespace Eigen;
+
+        int new_num_rows = T.rows();
+        int new_num_cols = T.cols();
+
+        MatrixXd t = MatrixXd::Zero(new_num_rows, new_num_cols);
+        for (int r = 0; r < T.rows(); ++r)
+        {
+            for (int c = 0; c < T.cols(); ++c)
+            {
+                double M1 = 0;
+                double M2 = 0;
+                int n = 0;
+
+                int col_start = clamp(c-radius, 0, new_num_cols-1);
+                int col_end = clamp(c+radius, 0, new_num_cols-1);
+                int col_size = col_end - col_start + 1;
+                int row_start = clamp(r-radius, 0, new_num_rows-1);
+                int row_end = clamp(r+radius, 0, new_num_rows-1);
+                int row_size = row_end - row_start + 1;
+
+                for (int row = row_start; row <= row_end; ++row)
+                {
+                    for (int col = col_start; col <= col_end; ++col)
+                    {
+                        int n1 = n;
+                        n++;
+                        double delta = T(row, col) - M1;
+                        double delta_n = delta / n;
+                        double term1 = delta * delta_n * n1;
+                        M1 += delta_n;
+                        M2 += term1;
+                    }
+                }
+                // std::cerr << M1 << "\t" << std::sqrt(M2/(n-1)) << "\t" << n << std::endl;
+                t(r, c) = M1 + 3 * std::sqrt(M2/(n-1));
+            }
+        }
+
+        return t;
+    }
+
+    void MongusFilter::applyTopHat(Eigen::MatrixXd *cz, Eigen::MatrixXd *surface, int radius)
+    {
+        using namespace Eigen;
+
+        auto R = computeResidual(*cz, *surface);
+        auto maxZ = matrixOpen(R, radius);
+        MatrixXd T = R - maxZ;
+        auto t = computeThresholds(T, radius);
+        for (int r = 0; r < T.rows(); ++r)
+        {
+            for (int c = 0; c < T.cols(); ++c)
+            {
+                if (T(r,c) > t(r,c))
+                {
+                    std::cerr << T(r, c) << " > " << t(r, c) << " at (" << r << "," << c << ")" << std::endl;
+                    (*cz)(r, c) = std::numeric_limits<double>::max();
                 }
             }
         }
     }
 
-    return maxZ;
-}
-
-Eigen::MatrixXd MongusFilter::computeThresholds(Eigen::MatrixXd T, int radius)
-{
-    using namespace Eigen;
-
-    int new_num_rows = T.rows();
-    int new_num_cols = T.cols();
-
-    MatrixXd t = MatrixXd::Zero(new_num_rows, new_num_cols);
-    for (int r = 0; r < T.rows(); ++r)
+    PointViewSet MongusFilter::run(PointViewPtr view)
     {
-        for (int c = 0; c < T.cols(); ++c)
+        bool logOutput = log()->getLevel() > LogLevel::Debug1;
+        if (logOutput)
+            log()->floatPrecision(8);
+        log()->get(LogLevel::Debug2) << "Process MongusFilter...\n";
+
+        auto idx = processGround(view);
+
+        PointViewSet viewSet;
+
+        if (!idx.empty() && (m_classify || m_extract))
         {
-            double M1 = 0;
-            double M2 = 0;
-            int n = 0;
 
-            auto clamp = [](double t, double min, double max)
+            if (m_classify)
             {
-                return ((t < min) ? min : ((t > max) ? max : t));
-            };
+                log()->get(LogLevel::Debug2) << "Labeled " << idx.size() << " ground returns!\n";
 
-            int col_start = clamp(c-radius, 0, new_num_cols-1);
-            int col_end = clamp(c+radius, 0, new_num_cols-1);
-            int col_size = col_end - col_start + 1;
-            int row_start = clamp(r-radius, 0, new_num_rows-1);
-            int row_end = clamp(r+radius, 0, new_num_rows-1);
-            int row_size = row_end - row_start + 1;
-
-            // MatrixXd foo = T.block(row_start, col_start, row_size, col_size);
-            // std::cerr << foo.mean() << std::endl;
-
-            for (int row = row_start; row <= row_end; ++row)
-            {
-                for (int col = col_start; col <= col_end; ++col)
+                // set the classification label of ground returns as 2
+                // (corresponding to ASPRS LAS specification)
+                for (const auto& i : idx)
                 {
-                    int n1 = n;
-                    n++;
-                    double delta = T(row, col) - M1;
-                    double delta_n = delta / n;
-                    double term1 = delta * delta_n * n1;
-                    M1 += delta_n;
-                    M2 += term1;
+                    view->setField(Dimension::Id::Classification, i, 2);
                 }
+
+                viewSet.insert(view);
             }
-            // std::cerr << M1 << "\t" << std::sqrt(M2/(n-1)) << "\t" << n << std::endl;
-            t(r, c) = M1 + 3 * std::sqrt(M2/(n-1));
-        }
-    }
 
-    return t;
-}
-
-void MongusFilter::applyTopHat(Eigen::MatrixXd *cz, Eigen::MatrixXd *surface, int radius)
-{
-    using namespace Eigen;
-
-    auto R = computeResidual(*cz, *surface);
-    auto maxZ = matrixOpen(R, radius);
-    MatrixXd T = R - maxZ;
-    auto t = computeThresholds(T, radius);
-    for (int r = 0; r < T.rows(); ++r)
-    {
-        for (int c = 0; c < T.cols(); ++c)
-        {
-            if (T(r,c) > t(r,c))
+            if (m_extract)
             {
-                std::cerr << T(r, c) << " > " << t(r, c) << " at (" << r << "," << c << ")" << std::endl;
-                (*cz)(r, c) = std::numeric_limits<double>::max();
+                log()->get(LogLevel::Debug2) << "Extracted " << idx.size() << " ground returns!\n";
+
+                // create new PointView containing only ground returns
+                PointViewPtr output = view->makeNew();
+                for (const auto& i : idx)
+                {
+                    output->appendPoint(*view, i);
+                }
+
+                viewSet.erase(view);
+                viewSet.insert(output);
             }
         }
-    }
-}
-
-PointViewSet MongusFilter::run(PointViewPtr view)
-{
-    bool logOutput = log()->getLevel() > LogLevel::Debug1;
-    if (logOutput)
-        log()->floatPrecision(8);
-    log()->get(LogLevel::Debug2) << "Process MongusFilter...\n";
-
-    auto idx = processGround(view);
-
-    PointViewSet viewSet;
-
-    if (!idx.empty() && (m_classify || m_extract))
-    {
-
-        if (m_classify)
+        else
         {
-            log()->get(LogLevel::Debug2) << "Labeled " << idx.size() << " ground returns!\n";
+            if (idx.empty())
+                log()->get(LogLevel::Debug2) << "Filtered cloud has no ground returns!\n";
 
-            // set the classification label of ground returns as 2
-            // (corresponding to ASPRS LAS specification)
-            for (const auto& i : idx)
-            {
-                view->setField(Dimension::Id::Classification, i, 2);
-            }
+            if (!(m_classify || m_extract))
+                log()->get(LogLevel::Debug2) << "Must choose --classify or --extract\n";
 
+            // return the view buffer unchanged
             viewSet.insert(view);
         }
 
-        if (m_extract)
-        {
-            log()->get(LogLevel::Debug2) << "Extracted " << idx.size() << " ground returns!\n";
-
-            // create new PointView containing only ground returns
-            PointViewPtr output = view->makeNew();
-            for (const auto& i : idx)
-            {
-                output->appendPoint(*view, i);
-            }
-
-            viewSet.erase(view);
-            viewSet.insert(output);
-        }
+        return viewSet;
     }
-    else
-    {
-        if (idx.empty())
-            log()->get(LogLevel::Debug2) << "Filtered cloud has no ground returns!\n";
-
-        if (!(m_classify || m_extract))
-            log()->get(LogLevel::Debug2) << "Must choose --classify or --extract\n";
-
-        // return the view buffer unchanged
-        viewSet.insert(view);
-    }
-
-    return viewSet;
-}
 
 } // namespace pdal

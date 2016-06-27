@@ -74,15 +74,21 @@ private:
 
     virtual void addDimensions(PointLayoutPtr layout);
     virtual void addArgs(ProgramArgs& args);
+    int clamp(int t, int min, int max);
     std::vector<double> morphOpen(PointViewPtr view, int radius);
     std::vector<double> morphClose(PointViewPtr view, int radius);
-    Eigen::MatrixXd TPS(Eigen::MatrixXd cx, Eigen::MatrixXd cy, Eigen::MatrixXd cz, double cell_size);
+    Eigen::MatrixXd TPS(Eigen::MatrixXd cx, Eigen::MatrixXd cy,
+                        Eigen::MatrixXd cz, double cell_size);
     PointIdHash calculateHash(PointViewPtr view);
     Eigen::MatrixXd matrixOpen(Eigen::MatrixXd data, int radius);
-    Eigen::MatrixXd computeResidual(Eigen::MatrixXd cz, Eigen::MatrixXd surface);
+    Eigen::MatrixXd computeResidual(Eigen::MatrixXd cz,
+                                    Eigen::MatrixXd surface);
     Eigen::MatrixXd computeThresholds(Eigen::MatrixXd T, int radius);
     void applyTopHat(Eigen::MatrixXd *cz, Eigen::MatrixXd *surface, int radius);
-    void downsampleMin(Eigen::MatrixXd *cx, Eigen::MatrixXd *cy, Eigen::MatrixXd* cz, Eigen::MatrixXd *dcx, Eigen::MatrixXd *dcy, Eigen::MatrixXd* dcz, double cell_size);
+    void downsampleMin(Eigen::MatrixXd *cx, Eigen::MatrixXd *cy,
+                       Eigen::MatrixXd* cz, Eigen::MatrixXd *dcx,
+                       Eigen::MatrixXd *dcy, Eigen::MatrixXd* dcz,
+                       double cell_size);
     std::vector<PointId> processGround(PointViewPtr view);
     virtual PointViewSet run(PointViewPtr view);
 
