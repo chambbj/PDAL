@@ -35,9 +35,15 @@
 #include "MongusFilter.hpp"
 
 #include <pdal/pdal_macros.hpp>
+#include <pdal/PipelineManager.hpp>
+#include <buffer/BufferReader.hpp>
 #include <pdal/util/ProgramArgs.hpp>
 
 #include <Eigen/Dense>
+
+#include "gdal_priv.h" // For File I/O
+#include "gdal_version.h" // For version info
+#include "ogr_spatialref.h"  //For Geographic Information/Transformations
 
 #include <unordered_map>
 
@@ -71,161 +77,18 @@ int MongusFilter::clamp(int t, int min, int max)
     return ((t < min) ? min : ((t > max) ? max : t));
 }
 
-std::vector<double> MongusFilter::morphOpen(PointViewPtr view, int radius)
+int MongusFilter::getColIndex(double x, double cell_size)
 {
-    point_count_t np(view->size());
-
-    auto hash = calculateHash(view);
-    log()->get(LogLevel::Debug3) << hash.size() << std::endl;
-
-    log()->get(LogLevel::Debug3) << "Computing morphological opening\n";
-
-    std::vector<double> minZ(np), maxZ(np);
-    typedef std::vector<PointId> PointIdVec;
-    std::map<PointId, PointIdVec> neighborMap;
-
-    // instead of iterating over points, iterate over cells?
-    // okay, this is almost the approx. version right?
-    // any benefit?
-    // what about hexes? or actual circular kernel?
-
-    // erode
-    for (PointId i = 0; i < np; ++i)
-    {
-        double x = view->getFieldAs<double>(Dimension::Id::X, i);
-        double y = view->getFieldAs<double>(Dimension::Id::Y, i);
-
-        // get hash for current point and neighboring cells, gather PointIds
-
-        int c = clamp(static_cast<int>(floor((x - m_bounds.minx) / m_cellSize)), 0, m_numCols-1);
-        int r = clamp(static_cast<int>(floor((m_maxRow - y) / m_cellSize)), 0, m_numRows-1);
-
-        std::vector<PointId> ids;
-        int col_start = clamp(c-radius, 0, m_numCols-1);
-        int col_end = clamp(c+radius, 0, m_numCols-1);
-        int row_start = clamp(r-radius, 0, m_numRows-1);
-        int row_end = clamp(r+radius, 0, m_numRows-1);
-
-        for (int row = row_start; row <= row_end; ++row)
-        {
-            for (int col = col_start; col <= col_end; ++col)
-            {
-                int id = row * m_numCols + col;
-                auto partial = hash[id];
-                if (partial.size())
-                {
-                    ids.insert(ids.end(), partial.begin(), partial.end());
-                }
-            }
-        }
-        // log()->get(LogLevel::Debug3) << ids.size() << std::endl;
-
-        neighborMap[i] = ids;
-        double localMin(std::numeric_limits<double>::max());
-        for (auto const& j : ids)
-        {
-            double z = view->getFieldAs<double>(Dimension::Id::Z, j);
-            if (z < localMin)
-                localMin = z;
-        }
-        minZ[i] = localMin;
-    }
-
-    // dilate
-    for (PointId i = 0; i < np; ++i)
-    {
-        auto ids = neighborMap[i];
-        double localMax(std::numeric_limits<double>::lowest());
-        for (auto const& j : ids)
-        {
-            double z = minZ[j];
-            if (z > localMax)
-                localMax = z;
-        }
-        maxZ[i] = localMax;
-    }
-
-    return maxZ;
+    return static_cast<int>(floor((x - m_bounds.minx) / cell_size));
 }
 
-std::vector<double> MongusFilter::morphClose(PointViewPtr view, int radius)
+int MongusFilter::getRowIndex(double y, double cell_size)
 {
-    point_count_t np(view->size());
-
-    auto hash = calculateHash(view);
-    log()->get(LogLevel::Debug3) << hash.size() << std::endl;
-
-    log()->get(LogLevel::Debug3) << "Computing morphological closing\n";
-
-    std::vector<double> minZ(np), maxZ(np);
-    typedef std::vector<PointId> PointIdVec;
-    std::map<PointId, PointIdVec> neighborMap;
-
-    // instead of iterating over points, iterate over cells?
-    // okay, this is almost the approx. version right?
-    // any benefit?
-    // what about hexes? or actual circular kernel?
-
-    // erode
-    for (PointId i = 0; i < np; ++i)
-    {
-        double x = view->getFieldAs<double>(Dimension::Id::X, i);
-        double y = view->getFieldAs<double>(Dimension::Id::Y, i);
-
-        // get hash for current point and neighboring cells, gather PointIds
-
-        int c = clamp(static_cast<int>(floor((x - m_bounds.minx) / m_cellSize)), 0, m_numCols-1);
-        int r = clamp(static_cast<int>(floor((m_maxRow - y) / m_cellSize)), 0, m_numRows-1);
-
-        std::vector<PointId> ids;
-        int col_start = clamp(c-radius, 0, m_numCols-1);
-        int col_end = clamp(c+radius, 0, m_numCols-1);
-        int row_start = clamp(r-radius, 0, m_numRows-1);
-        int row_end = clamp(r+radius, 0, m_numRows-1);
-
-        for (int row = row_start; row <= row_end; ++row)
-        {
-            for (int col = col_start; col <= col_end; ++col)
-            {
-                int id = row * m_numCols + col;
-                auto partial = hash[id];
-                if (partial.size())
-                {
-                    ids.insert(ids.end(), partial.begin(), partial.end());
-                }
-            }
-        }
-        // log()->get(LogLevel::Debug3) << ids.size() << std::endl;
-
-        neighborMap[i] = ids;
-        double localMax(std::numeric_limits<double>::lowest());
-        for (auto const& j : ids)
-        {
-            double z = view->getFieldAs<double>(Dimension::Id::Z, j);
-            if (z > localMax)
-                localMax = z;
-        }
-        maxZ[i] = localMax;
-    }
-
-    // dilate
-    for (PointId i = 0; i < np; ++i)
-    {
-        auto ids = neighborMap[i];
-        double localMin(std::numeric_limits<double>::max());
-        for (auto const& j : ids)
-        {
-            double z = maxZ[j];
-            if (z < localMin)
-                localMin = z;
-        }
-        minZ[i] = localMin;
-    }
-
-    return minZ;
+    return static_cast<int>(floor((m_maxRow - y) / cell_size));
 }
 
-Eigen::MatrixXd MongusFilter::TPS(Eigen::MatrixXd cx, Eigen::MatrixXd cy, Eigen::MatrixXd cz, double cell_size)
+Eigen::MatrixXd MongusFilter::TPS(Eigen::MatrixXd cx, Eigen::MatrixXd cy,
+                                  Eigen::MatrixXd cz, double cell_size)
 {
     using namespace Eigen;
 
@@ -235,24 +98,25 @@ Eigen::MatrixXd MongusFilter::TPS(Eigen::MatrixXd cx, Eigen::MatrixXd cy, Eigen:
 
     MatrixXd S = MatrixXd::Zero(num_rows, num_cols);
 
-    for (int outer_row = 0; outer_row < num_rows; ++outer_row)
+    for (int outer_col = 0; outer_col < num_cols; ++outer_col)
     {
-        for (int outer_col = 0; outer_col < num_cols; ++outer_col)
+        for (int outer_row = 0; outer_row < num_rows; ++outer_row)
         {
-            // radius of 3, giving an effective 7x7 neighborhood, according to
-            // the paper
+            // Further optimizations are achieved by estimating only the
+            // interpolated surface within a local neighbourhood (e.g. a 7 x 7
+            // neighbourhood is used in our case) of the cell being filtered.
             int radius = 3;
 
-            int col_start = clamp(outer_col-radius, 0, num_cols-1);
-            int col_end = clamp(outer_col+radius, 0, num_cols-1);
-            int col_size = col_end - col_start + 1;
-            int row_start = clamp(outer_row-radius, 0, num_rows-1);
-            int row_end = clamp(outer_row+radius, 0, num_rows-1);
-            int row_size = row_end - row_start + 1;
+            int cs = clamp(outer_col-radius, 0, num_cols-1);
+            int ce = clamp(outer_col+radius, 0, num_cols-1);
+            int col_size = ce - cs + 1;
+            int rs = clamp(outer_row-radius, 0, num_rows-1);
+            int re = clamp(outer_row+radius, 0, num_rows-1);
+            int row_size = re - rs + 1;
 
-            MatrixXd Xn = cx.block(row_start, col_start, row_size, col_size);
-            MatrixXd Yn = cy.block(row_start, col_start, row_size, col_size);
-            MatrixXd Hn = cz.block(row_start, col_start, row_size, col_size);
+            MatrixXd Xn = cx.block(rs, cs, row_size, col_size);
+            MatrixXd Yn = cy.block(rs, cs, row_size, col_size);
+            MatrixXd Hn = cz.block(rs, cs, row_size, col_size);
 
             int nsize = Hn.size();
             VectorXd T = VectorXd::Zero(nsize);
@@ -272,7 +136,6 @@ Eigen::MatrixXd MongusFilter::TPS(Eigen::MatrixXd cx, Eigen::MatrixXd cy, Eigen:
                     continue;
                 T(id) = zj;
                 P.row(id) << 1, xj, yj;
-                PointId kk = 0;
                 for (int id2 = 0; id2 < Hn.size(); ++id2)
                 {
                     if (id == id2)
@@ -287,7 +150,6 @@ Eigen::MatrixXd MongusFilter::TPS(Eigen::MatrixXd cx, Eigen::MatrixXd cy, Eigen:
                     if (rsqr == 0.0)
                         continue;
                     K(id, id2) = rsqr * std::log10(std::sqrt(rsqr));
-                    kk++;
                 }
             }
 
@@ -320,7 +182,7 @@ Eigen::MatrixXd MongusFilter::TPS(Eigen::MatrixXd cx, Eigen::MatrixXd cy, Eigen:
                 double yj = Yn(j);
                 if (std::isnan(yj))
                     continue;
-                double rsqr = (xj - xi) * (xj - xi) + (yj - yi) * (yj - yi);
+                double rsqr = (xj - xi2) * (xj - xi2) + (yj - yi2) * (yj - yi2);
                 if (rsqr == 0.0)
                     continue;
                 sum += w(j) * rsqr * std::log10(std::sqrt(rsqr));
@@ -381,107 +243,169 @@ Eigen::MatrixXd MongusFilter::TPS(Eigen::MatrixXd cx, Eigen::MatrixXd cy, Eigen:
     return S;
 }
 
-PointIdHash MongusFilter::calculateHash(PointViewPtr view)
+void MongusFilter::writeMatrix(Eigen::MatrixXd data, std::string filename, double cell_size, PointViewPtr view)
 {
-    log()->get(LogLevel::Debug3) << "Recomputing hash\n";
+    int cols = data.cols();
+    int rows = data.rows();
 
-    // compute hash grid at m_cellSize
-    PointIdHash hash;
-    hash.reserve(m_numCols * m_numRows);
+    GDALAllRegister();
 
-    for (PointId i = 0; i < view->size(); ++i)
+    GDALDataset *mpDstDS;
+
+    char **papszMetadata;
+
+    // parse the format driver, hardcoded for the time being
+    std::string tFormat("GTIFF");
+    const char *pszFormat = tFormat.c_str();
+    GDALDriver* tpDriver = GetGDALDriverManager()->GetDriverByName(pszFormat);
+
+    // try to create a file of the requested format
+    if (tpDriver != NULL)
     {
-        double x = view->getFieldAs<double>(Dimension::Id::X, i);
-        double y = view->getFieldAs<double>(Dimension::Id::Y, i);
+        papszMetadata = tpDriver->GetMetadata();
+        if (CSLFetchBoolean(papszMetadata, GDAL_DCAP_CREATE, FALSE))
+        {
+            char **papszOptions = NULL;
 
-        int c = clamp(static_cast<int>(floor((x - m_bounds.minx) / m_cellSize)), 0, m_numCols-1);
-        int r = clamp(static_cast<int>(floor((m_maxRow - y) / m_cellSize)), 0, m_numRows-1);
-        // log()->get(LogLevel::Debug5) << c << ", " << r << std::endl;
+            mpDstDS = tpDriver->Create(filename.c_str(), cols, rows, 1,
+                                       GDT_Float32, papszOptions);
 
-        int id = r * m_numCols + c;
+            // set the geo transformation
+            double adfGeoTransform[6];
+            adfGeoTransform[0] = m_bounds.minx; // - 0.5*m_GRID_DIST_X;
+            adfGeoTransform[1] = cell_size;
+            adfGeoTransform[2] = 0.0;
+            adfGeoTransform[3] = m_bounds.maxy; // + 0.5*m_GRID_DIST_Y;
+            adfGeoTransform[4] = 0.0;
+            adfGeoTransform[5] = -1 * cell_size;
+            mpDstDS->SetGeoTransform(adfGeoTransform);
 
-        auto ids = hash[id];
-        ids.push_back(i);
-        hash[id] = ids;
+            // set the projection
+            mpDstDS->SetProjection(view->spatialReference().getWKT().c_str());
+        }
     }
 
-    return hash;
+    // if we have a valid file
+    if (mpDstDS)
+    {
+        // loop over the raster and determine max slope at each location
+        int cs = 1, ce = cols - 1;
+        int rs = 1, re = rows - 1;
+        float *poRasterData = new float[cols*rows];
+        for (uint32_t i=0; i<cols*rows; i++)
+        {
+            poRasterData[i] = std::numeric_limits<float>::min();
+        }
+
+        #pragma omp parallel for
+        for (int c = cs; c < ce; ++c)
+        {
+            for (int r = rs; r < re; ++r)
+            {
+                if (data(r, c) == 0.0 || std::isnan(data(r, c) || data(r, c) == std::numeric_limits<double>::max()))
+                    continue;
+                poRasterData[(r * cols) + c] =
+                    data(r, c);
+            }
+        }
+
+        // write the data
+        if (poRasterData)
+        {
+            GDALRasterBand *tBand = mpDstDS->GetRasterBand(1);
+
+            tBand->SetNoDataValue(std::numeric_limits<float>::min());
+
+            if (cols > 0 && rows > 0)
+#if GDAL_VERSION_MAJOR <= 1
+                tBand->RasterIO(GF_Write, 0, 0, cols, rows,
+                                poRasterData, cols, rows,
+                                GDT_Float32, 0, 0);
+#else
+
+                int ret = tBand->RasterIO(GF_Write, 0, 0, cols, rows,
+                                          poRasterData, cols, rows,
+                                          GDT_Float32, 0, 0, 0);
+#endif
+        }
+
+        GDALClose((GDALDatasetH) mpDstDS);
+
+        delete [] poRasterData;
+    }
+}
+
+void MongusFilter::writeControl(Eigen::MatrixXd cx, Eigen::MatrixXd cy, Eigen::MatrixXd cz, std::string filename)
+{
+    PipelineManager m;
+
+    PointTable table;
+    PointViewPtr view(new PointView(table));
+
+    table.layout()->registerDim(Dimension::Id::X);
+    table.layout()->registerDim(Dimension::Id::Y);
+    table.layout()->registerDim(Dimension::Id::Z);
+
+    PointId i = 0;
+    for (int j = 0; j < cz.size(); ++j)
+    {
+        if (std::isnan(cx(j)) || std::isnan(cy(j)))
+            continue;
+        if (cz(j) == std::numeric_limits<double>::max())
+            continue;
+        view->setField(Dimension::Id::X, i, cx(j));
+        view->setField(Dimension::Id::Y, i, cy(j));
+        view->setField(Dimension::Id::Z, i, cz(j));
+        i++;
+    }
+
+    BufferReader r;
+    r.addView(view);
+
+    Stage& w = m.makeWriter(filename, "writers.las", r);
+    w.prepare(table);
+    w.execute(table);
 }
 
 std::vector<PointId> MongusFilter::processGround(PointViewPtr view)
 {
+    using namespace Eigen;
+
     point_count_t np(view->size());
 
     std::vector<PointId> groundIdx;
 
     // initialization
 
-    // start by stashing the original Z values
-    std::vector<double> originalZ;
-    for (PointId i = 0; i < view->size(); ++i)
-    {
-        originalZ.push_back(view->getFieldAs<double>(Dimension::Id::Z, i));
-    }
-
     view->calculateBounds(m_bounds);
 
     m_cellSize = 1.0;
 
-    m_numCols = static_cast<int>(ceil((m_bounds.maxx - m_bounds.minx)/m_cellSize)) + 1;
-    m_numRows = static_cast<int>(ceil((m_bounds.maxy - m_bounds.miny)/m_cellSize)) + 1;
+    m_numCols =
+        static_cast<int>(ceil((m_bounds.maxx - m_bounds.minx)/m_cellSize)) + 1;
+    m_numRows =
+        static_cast<int>(ceil((m_bounds.maxy - m_bounds.miny)/m_cellSize)) + 1;
     m_maxRow = m_bounds.miny + m_numRows * m_cellSize;
 
-    auto mo = morphOpen(view, 11);
-
-    // Z now contains the opened values
-    for (PointId i = 0; i < view->size(); ++i)
-    {
-        view->setField(Dimension::Id::Z, i, mo[i]);
-    }
-
-    auto mc = morphClose(view, 9);
-
-    // Z now contains the closed values
-    for (PointId i = 0; i < view->size(); ++i)
-    {
-        view->setField(Dimension::Id::Z, i, mc[i]);
-    }
-
-    // compare morphological values to orignals and replace low points
-    for (PointId i = 0; i < view->size(); ++i)
-    {
-        auto diff = view->getFieldAs<double>(Dimension::Id::Z, i) - originalZ[i];
-
-        if (diff < 1.0)
-            view->setField(Dimension::Id::Z, i, originalZ[i]);
-    }
-
     // create control points matrix at 1m cell size
-    double initCellSize = 1.0;
+    MatrixXd cx(m_numRows, m_numCols);
+    cx.setConstant(std::numeric_limits<double>::quiet_NaN());
 
-    int num_cols = static_cast<int>(ceil((m_bounds.maxx - m_bounds.minx)/initCellSize)) + 1;
-    int num_rows = static_cast<int>(ceil((m_bounds.maxy - m_bounds.miny)/initCellSize)) + 1;
-    int max_row = m_bounds.miny + num_rows * initCellSize;
+    MatrixXd cy(m_numRows, m_numCols);
+    cy.setConstant(std::numeric_limits<double>::quiet_NaN());
 
-    using namespace Eigen;
+    MatrixXd cz(m_numRows, m_numCols);
+    cz.setConstant(std::numeric_limits<double>::max());
 
-    MatrixXd cx = MatrixXd::Constant(num_rows, num_cols, std::numeric_limits<double>::quiet_NaN());
-    MatrixXd cy = MatrixXd::Constant(num_rows, num_cols, std::numeric_limits<double>::quiet_NaN());
-    MatrixXd cz = MatrixXd::Constant(num_rows, num_cols, std::numeric_limits<double>::max());
-
-    for (PointId i = 0; i < view->size(); ++i)
+    for (PointId i = 0; i < np; ++i)
     {
         using namespace Dimension::Id;
         double x = view->getFieldAs<double>(X, i);
         double y = view->getFieldAs<double>(Y, i);
         double z = view->getFieldAs<double>(Z, i);
 
-        int c =
-            clamp(static_cast<int>(floor((x - m_bounds.minx) / initCellSize)),
-                  0, num_cols-1);
-        int r =
-            clamp(static_cast<int>(floor((max_row - y) / initCellSize)),
-                  0, num_rows-1);
+        int c = clamp(getColIndex(x, m_cellSize), 0, m_numCols-1);
+        int r = clamp(getRowIndex(y, m_cellSize), 0, m_numRows-1);
 
         if (z < cz(r, c))
         {
@@ -490,125 +414,215 @@ std::vector<PointId> MongusFilter::processGround(PointViewPtr view)
             cz(r, c) = z;
         }
     }
+    
+    writeControl(cx, cy, cz, "minZ.laz");
+
+    // In our case, 2D structural elements of circular shape are employed and
+    // sufficient accuracy is achieved by using a larger window size for opening
+    // (W11) than for closing (W9).
+    auto mo = matrixOpen(cz, 11);
+    writeControl(cx, cy, mo, "opened.laz");
+    auto mc = matrixClose(mo, 9);
+    writeControl(cx, cy, mc, "closed.laz");
+    
+    // auto messing = TPS(cx, cy, mc, m_cellSize);
+    // writeMatrix(messing, "messing.tif", m_cellSize, view);
+
+    point_count_t num_low(0);
+
+    // ...in order to minimize the distortions caused by such filtering, the
+    // output points ... are compared to C and only ci with significantly lower
+    // elevation [are] replaced... In our case, d = 1.0 m was used.
+    // for (PointId i = 0; i < np; ++i)
+    // {
+    //     using namespace Dimension::Id;
+    //     double x = view->getFieldAs<double>(X, i);
+    //     double y = view->getFieldAs<double>(Y, i);
+    //     double z = view->getFieldAs<double>(Z, i);
+    // 
+    //     int c = clamp(getColIndex(x, m_cellSize), 0, m_numCols-1);
+    //     int r = clamp(getRowIndex(y, m_cellSize), 0, m_numRows-1);
+    // 
+    //     auto diff = mc(r, c) - z;
+    // 
+    //     if (diff >= 1.0)
+    //     {
+    //         view->setField(Dimension::Id::Z, i, mc(r, c));
+    //         num_low++;
+    //     }
+    // }
+    for (int i = 0; i < cz.size(); ++i)
+    {
+      double diff = mc(i) - cz(i);
+      if (diff >= 1.0)
+      {
+          cz(i) = mc(i);
+          num_low++;
+      }
+    }
+    std::cerr << num_low << " low points replaced\n";
+    
+    writeControl(cx, cy, cz, "newControl.laz");
 
     // downsample control at max_level
-    int level = 8;
+    int level = 7;
     double newCellSize = std::pow(2, level-1);
 
     MatrixXd dcx, dcy, dcz;
     downsampleMin(&cx, &cy, &cz, &dcx, &dcy, &dcz, newCellSize);
+    writeControl(dcx, dcy, dcz, "temp.laz");
 
     // compute TPS at max_level
     auto surface = TPS(dcx, dcy, dcz, newCellSize);
-
-    int end_level = 4;
+    writeMatrix(surface, "temp.tif", newCellSize, view);
 
     MatrixXd t;
 
-    // for each level counting back to 0
-    for (int l = level-1; l >= end_level; --l)
+    // Point-filtering is performed iteratively at each level of the
+    // control-points hierarchy in a top-down fashion
+    for (int l = level-1; l > 0; --l)
     {
         std::cerr << "Level " << l << std::endl;
 
         // downsample control at level
         newCellSize = std::pow(2, l-1);
         downsampleMin(&cx, &cy, &cz, &dcx, &dcy, &dcz, newCellSize);
+        char buf3[256];
+        sprintf(buf3, "before%d.laz", l);
+        std::string name3(buf3);
+        writeControl(dcx, dcy, dcz, name3);
 
-        // applyTopHat(&dcz, &surface, 2*l);
         auto R = computeResidual(dcz, surface);
-        std::cerr << R << std::endl << std::endl;
+        char rbuf[256];
+        sprintf(rbuf, "R%d.tif", l);
+        std::string rbufn(rbuf);
+        writeMatrix(R, rbufn, newCellSize, view);
+        
         auto maxZ = matrixOpen(R, 2*l);
-        std::cerr << maxZ << std::endl << std::endl;
+        char obuf[256];
+        sprintf(obuf, "open%d.tif", l);
+        std::string obufn(obuf);
+        writeMatrix(maxZ, obufn, newCellSize, view);
+        
         MatrixXd T = R - maxZ;
-        std::cerr << T << std::endl << std::endl;
-        t = computeThresholds(T, 2*l);
-        std::cerr << t << std::endl << std::endl;
-        for (int r = 0; r < T.rows(); ++r)
+        char Tbuf[256];
+        sprintf(Tbuf, "tophat%d.tif", l);
+        std::string Tbufn(Tbuf);
+        writeMatrix(T, Tbufn, newCellSize, view);
+        
+        t = computeThresholds(T, 2);
+        char tbuf[256];
+        sprintf(tbuf, "thresh%d.tif", l);
+        std::string tbufn(tbuf);
+        writeMatrix(t, tbufn, newCellSize, view);
+
+        // the time complexity of the approach is reduced by filtering only the
+        // control-points in each iteration
+        // std::cerr << T.size() << "\t" << t.size() << "\t" << surface.size() << "\t" << dcz.size() << std::endl;
+        for (int c = 0; c < T.cols(); ++c)
         {
-            for (int c = 0; c < T.cols(); ++c)
+            for (int r = 0; r < T.rows(); ++r)
             {
+                // If the TPS control-point is recognized as a non-ground point,
+                // it is replaced by the interpolated point.
                 if (T(r,c) > t(r,c))
                 {
-                    std::cerr << T(r, c) << " > " << t(r, c) << " at (" << r << "," << c << ")" << std::endl;
-                    dcz(r, c) = std::numeric_limits<double>::max();
+                  int rr = std::floor(r/2);
+                  int cc = std::floor(c/2);
+                  int rs = newCellSize * r;
+                  int cs = newCellSize * c;
+                  auto block = cz.block(rs, cs, newCellSize, newCellSize);
+                  MatrixXd::Index ri, ci;
+                  block.minCoeff(&ri, &ci);
+                  // std::cerr << block << std::endl;
+                  
+                  ri += rs;
+                  ci += cs;
+                  
+                  // std::cerr << ri << "\t" << ci << "\t" << cz(ri, ci) << "\t" << rr << "\t" << cc << "\t" << surface(rr, cc) << "\t" << r << "\t" << c << "\t" << dcz(r, c) << "\t" << T(r, c) << "\t" << t(r, c) << std::endl;
+                  
+                    dcz(r, c) = surface(rr, cc);
+                    cz(ri, ci) = surface(rr, cc);
                 }
             }
         }
+        char buf2[256];
+        sprintf(buf2, "after%d.laz", l);
+        std::string name2(buf2);
+        writeControl(dcx, dcy, dcz, name2);
 
         // compute TPS with update control at level
+
+        // The interpolated surface is estimated based on the filtered set of
+        // TPS control-points at the previous level of hierarchy
         surface.resize(dcz.rows(), dcz.cols());
         surface = TPS(dcx, dcy, dcz, newCellSize);
+        char buffer[256];
+        sprintf(buffer, "temp%d.tif", l);
+        std::string name(buffer);
+        writeMatrix(surface, name, newCellSize, view);
     }
-    std::cerr << "check\n";
+
+
+    // one last residual with original control points and final TPS surface?
+    // auto R = cz - surface;
+    // auto maxZ = matrixOpen(R, 4);
+    // MatrixXd T = R - maxZ;
+    // t = computeThresholds(T, 4);
+
+    // std::cerr << surface << std::endl << std::endl;
+    // std::cerr << R << std::endl << std::endl;
+    // std::cerr << t << std::endl << std::endl;
 
     // apply final filtering (top hat) using raw points against TPS
-    for (PointId i = 0; i < view->size(); ++i)
+
+    // ...the LiDAR points are filtered only at the bottom level.
+    std::cerr << newCellSize << std::endl;
+    std::cerr << t.size() << "\t" << surface.size() << std::endl;
+    for (PointId i = 0; i < np; ++i)
     {
         using namespace Dimension::Id;
         double x = view->getFieldAs<double>(X, i);
         double y = view->getFieldAs<double>(Y, i);
         double z = view->getFieldAs<double>(Z, i);
 
-        int c =
-            clamp(static_cast<int>(floor((x - m_bounds.minx) / newCellSize)),
-                  0, surface.rows()-1);
-        int r =
-            clamp(static_cast<int>(floor((max_row - y) / newCellSize)),
-                  0, surface.cols()-1);
+        int c = clamp(getColIndex(x, newCellSize), 0, m_numCols-1);
+        int r = clamp(getRowIndex(y, newCellSize), 0, m_numRows-1);
+
 
         double res = z - surface(r, c);
-        // std::cerr << z << "\t" << surface(r, c) << "\t" << res << "\t" << t(r, c) << std::endl;
         // open?
-        if (res > t(r, c))
-            continue;
-        groundIdx.push_back(i);
+        if (res < t(r, c))
+            groundIdx.push_back(i);
     }
+    std::cerr << "done\n";
+    std::cerr << groundIdx.size() << std::endl;
 
     return groundIdx;
-
-    // temporary
-    // PointViewPtr output = view->makeNew();
-    //
-    // PointId i = 0;
-    // for (int r = 0; r < surface.rows(); ++r)
-    // {
-    //     for (int c = 0; c < surface.cols(); ++c)
-    //     {
-    //         using namespace Dimension::Id;
-    //         if (std::isnan(dcx(r, c)))
-    //             continue;
-    //         output->setField(X, i, dcx(r, c));
-    //         if (std::isnan(dcy(r, c)))
-    //             continue;
-    //         output->setField(Y, i, dcy(r, c));
-    //         if (surface(r, c) == 0)
-    //             continue;
-    //         output->setField(Z, i, surface(r, c));
-    //         i++;
-    //     }
-    // }
-    //
-    // viewSet.erase(view);
-    // viewSet.insert(output);
 }
 
-void MongusFilter::downsampleMin(Eigen::MatrixXd *cx, Eigen::MatrixXd *cy, Eigen::MatrixXd* cz, Eigen::MatrixXd *dcx, Eigen::MatrixXd *dcy, Eigen::MatrixXd* dcz, double cell_size)
+void MongusFilter::downsampleMin(Eigen::MatrixXd *cx, Eigen::MatrixXd *cy,
+                                 Eigen::MatrixXd* cz, Eigen::MatrixXd *dcx,
+                                 Eigen::MatrixXd *dcy, Eigen::MatrixXd* dcz,
+                                 double cell_size)
 {
     int nr = ceil(cz->rows() / cell_size);
     int nc = ceil(cz->cols() / cell_size);
 
-    std::cerr << nr << "\t" << nc << std::endl;
+    std::cerr << nr << "\t" << nc << "\t" << cell_size << std::endl;
 
     dcx->resize(nr, nc);
     dcx->setConstant(std::numeric_limits<double>::quiet_NaN());
+
     dcy->resize(nr, nc);
     dcy->setConstant(std::numeric_limits<double>::quiet_NaN());
+
     dcz->resize(nr, nc);
     dcz->setConstant(std::numeric_limits<double>::max());
 
-    for (int r = 0; r < cz->rows(); ++r)
+    for (int c = 0; c < cz->cols(); ++c)
     {
-        for (int c = 0; c < cz->cols(); ++c)
+        for (int r = 0; r < cz->rows(); ++r)
         {
             if ((*cz)(r, c) == std::numeric_limits<double>::max())
                 continue;
@@ -626,14 +640,15 @@ void MongusFilter::downsampleMin(Eigen::MatrixXd *cx, Eigen::MatrixXd *cy, Eigen
     }
 }
 
-Eigen::MatrixXd MongusFilter::computeResidual(Eigen::MatrixXd cz, Eigen::MatrixXd surface)
+Eigen::MatrixXd MongusFilter::computeResidual(Eigen::MatrixXd cz,
+        Eigen::MatrixXd surface)
 {
     using namespace Eigen;
 
     MatrixXd R = MatrixXd::Zero(cz.rows(), cz.cols());
-    for (int r = 0; r < cz.rows(); ++r)
+    for (int c = 0; c < cz.cols(); ++c)
     {
-        for (int c = 0; c < cz.cols(); ++c)
+        for (int r = 0; r < cz.rows(); ++r)
         {
             if (cz(r, c) == std::numeric_limits<double>::max())
                 continue;
@@ -647,53 +662,72 @@ Eigen::MatrixXd MongusFilter::computeResidual(Eigen::MatrixXd cz, Eigen::MatrixX
     return R;
 }
 
+Eigen::MatrixXd MongusFilter::padMatrix(Eigen::MatrixXd data, int radius)
+{
+  using namespace Eigen;
+  
+  MatrixXd data2 = MatrixXd::Zero(data.rows()+2*radius, data.cols()+2*radius);
+  data2.block(radius, radius, data.rows(), data.cols()) = data;
+  data2.block(radius, 0, data.rows(), radius) =
+      data.block(0, 0, data.rows(), radius).rowwise().reverse();
+  data2.block(radius, data.cols()+radius, data.rows(), radius) =
+      data.block(0, data.cols()-radius, data.rows(), radius).rowwise().reverse();
+  data2.block(0, 0, radius, data2.cols()) =
+      data2.block(radius, 0, radius, data2.cols()).colwise().reverse();
+  data2.block(data.rows()+radius, 0, radius, data2.cols()) =
+      data2.block(data2.rows()-radius, 0, radius, data2.cols()).colwise().reverse();
+      
+  return data2;
+}
+
 Eigen::MatrixXd MongusFilter::matrixOpen(Eigen::MatrixXd data, int radius)
 {
     using namespace Eigen;
+    
+    auto data2 = padMatrix(data, radius);
 
-    int new_num_rows = data.rows();
-    int new_num_cols = data.cols();
+    int nrows = data2.rows();
+    int ncols = data2.cols();
 
     // first min, then max of min
-    MatrixXd minZ =
-        MatrixXd::Constant(new_num_rows, new_num_cols,
-                           std::numeric_limits<double>::max());
-    MatrixXd maxZ =
-        MatrixXd::Constant(new_num_rows, new_num_cols,
-                           std::numeric_limits<double>::lowest());
-    for (int r = 0; r < minZ.rows(); ++r)
+    MatrixXd minZ = MatrixXd::Constant(nrows, ncols,
+                                       std::numeric_limits<double>::max());
+    MatrixXd maxZ = MatrixXd::Constant(nrows, ncols,
+                                       std::numeric_limits<double>::lowest());
+    for (int c = 0; c < ncols; ++c)
     {
-        for (int c = 0; c < minZ.cols(); ++c)
+        for (int r = 0; r < nrows; ++r)
         {
-            int col_start = clamp(c-radius, 0, new_num_cols-1);
-            int col_end = clamp(c+radius, 0, new_num_cols-1);
-            int row_start = clamp(r-radius, 0, new_num_rows-1);
-            int row_end = clamp(r+radius, 0, new_num_rows-1);
+            int cs = clamp(c-radius, 0, ncols-1);
+            int ce = clamp(c+radius, 0, ncols-1);
+            int rs = clamp(r-radius, 0, nrows-1);
+            int re = clamp(r+radius, 0, nrows-1);
 
-            for (int row = row_start; row <= row_end; ++row)
+            for (int col = cs; col <= ce; ++col)
             {
-                for (int col = col_start; col <= col_end; ++col)
+                for (int row = rs; row <= re; ++row)
                 {
                     if ((row-r)*(row-r)+(col-c)*(col-c) > radius*radius)
                         continue;
-                    if (data(row, col) < minZ(r, c))
-                        minZ(r, c) = data(row, col);
+                    if (data2(row, col) < minZ(r, c))
+                        minZ(r, c) = data2(row, col);
                 }
             }
         }
     }
-    for (int r = 0; r < minZ.rows(); ++r)
+    // std::cerr << minZ << std::endl << std::endl;
+    for (int c = 0; c < ncols; ++c)
     {
-        for (int c = 0; c < minZ.cols(); ++c)
+        for (int r = 0; r < nrows; ++r)
         {
-            int col_start = clamp(c-radius, 0, new_num_cols-1);
-            int col_end = clamp(c+radius, 0, new_num_cols-1);
-            int row_start = clamp(r-radius, 0, new_num_rows-1);
-            int row_end = clamp(r+radius, 0, new_num_rows-1);
+            int cs = clamp(c-radius, 0, ncols-1);
+            int ce = clamp(c+radius, 0, ncols-1);
+            int rs = clamp(r-radius, 0, nrows-1);
+            int re = clamp(r+radius, 0, nrows-1);
 
-            for (int row = row_start; row <= row_end; ++row)
+            for (int col = cs; col <= ce; ++col)
             {
-                for (int col = col_start; col <= col_end; ++col)
+                for (int row = rs; row <= re; ++row)
                 {
                     if ((row-r)*(row-r)+(col-c)*(col-c) > radius*radius)
                         continue;
@@ -704,36 +738,93 @@ Eigen::MatrixXd MongusFilter::matrixOpen(Eigen::MatrixXd data, int radius)
         }
     }
 
-    return maxZ;
+    return maxZ.block(radius, radius, data.rows(), data.cols());
+}
+
+Eigen::MatrixXd MongusFilter::matrixClose(Eigen::MatrixXd data, int radius)
+{
+    using namespace Eigen;
+    
+    auto data2 = padMatrix(data, radius);
+
+    int nrows = data2.rows();
+    int ncols = data2.cols();
+
+    // first min, then max of min
+    MatrixXd minZ = MatrixXd::Constant(nrows, ncols,
+                                       std::numeric_limits<double>::max());
+    MatrixXd maxZ = MatrixXd::Constant(nrows, ncols,
+                                       std::numeric_limits<double>::lowest());
+    for (int c = 0; c < ncols; ++c)
+    {
+        for (int r = 0; r < nrows; ++r)
+        {
+            int cs = clamp(c-radius, 0, ncols-1);
+            int ce = clamp(c+radius, 0, ncols-1);
+            int rs = clamp(r-radius, 0, nrows-1);
+            int re = clamp(r+radius, 0, nrows-1);
+
+            for (int col = cs; col <= ce; ++col)
+            {
+                for (int row = rs; row <= re; ++row)
+                {
+                    if ((row-r)*(row-r)+(col-c)*(col-c) > radius*radius)
+                        continue;
+                    if (data2(row, col) > maxZ(r, c))
+                        maxZ(r, c) = data2(row, col);
+                }
+            }
+        }
+    }
+    for (int c = 0; c < ncols; ++c)
+    {
+        for (int r = 0; r < nrows; ++r)
+        {
+            int cs = clamp(c-radius, 0, ncols-1);
+            int ce = clamp(c+radius, 0, ncols-1);
+            int rs = clamp(r-radius, 0, nrows-1);
+            int re = clamp(r+radius, 0, nrows-1);
+
+            for (int col = cs; col <= ce; ++col)
+            {
+                for (int row = rs; row <= re; ++row)
+                {
+                    if ((row-r)*(row-r)+(col-c)*(col-c) > radius*radius)
+                        continue;
+                    if (maxZ(row, col) < minZ(r, c))
+                        minZ(r, c) = maxZ(row, col);
+                }
+            }
+        }
+    }
+
+    return minZ.block(radius, radius, data.rows(), data.cols());
 }
 
 Eigen::MatrixXd MongusFilter::computeThresholds(Eigen::MatrixXd T, int radius)
 {
     using namespace Eigen;
 
-    int new_num_rows = T.rows();
-    int new_num_cols = T.cols();
-
-    MatrixXd t = MatrixXd::Zero(new_num_rows, new_num_cols);
-    for (int r = 0; r < T.rows(); ++r)
+    MatrixXd t = MatrixXd::Zero(T.rows(), T.cols());
+    for (int c = 0; c < T.cols(); ++c)
     {
-        for (int c = 0; c < T.cols(); ++c)
+        for (int r = 0; r < T.rows(); ++r)
         {
             double M1 = 0;
             double M2 = 0;
             int n = 0;
 
-            int col_start = clamp(c-radius, 0, new_num_cols-1);
-            int col_end = clamp(c+radius, 0, new_num_cols-1);
-            int col_size = col_end - col_start + 1;
-            int row_start = clamp(r-radius, 0, new_num_rows-1);
-            int row_end = clamp(r+radius, 0, new_num_rows-1);
-            int row_size = row_end - row_start + 1;
+            int cs = clamp(c-radius, 0, T.cols()-1);
+            int ce = clamp(c+radius, 0, T.cols()-1);
+            int rs = clamp(r-radius, 0, T.rows()-1);
+            int re = clamp(r+radius, 0, T.rows()-1);
 
-            for (int row = row_start; row <= row_end; ++row)
+            for (int col = cs; col <= ce; ++col)
             {
-                for (int col = col_start; col <= col_end; ++col)
+                for (int row = rs; row <= re; ++row)
                 {
+                    if ((row-r)*(row-r)+(col-c)*(col-c) > radius*radius)
+                        continue;
                     int n1 = n;
                     n++;
                     double delta = T(row, col) - M1;
@@ -743,7 +834,6 @@ Eigen::MatrixXd MongusFilter::computeThresholds(Eigen::MatrixXd T, int radius)
                     M2 += term1;
                 }
             }
-            // std::cerr << M1 << "\t" << std::sqrt(M2/(n-1)) << "\t" << n << std::endl;
             t(r, c) = M1 + 3 * std::sqrt(M2/(n-1));
         }
     }
@@ -759,6 +849,7 @@ PointViewSet MongusFilter::run(PointViewPtr view)
     log()->get(LogLevel::Debug2) << "Process MongusFilter...\n";
 
     auto idx = processGround(view);
+    std::cerr << idx.size() << std::endl;
 
     PointViewSet viewSet;
 
