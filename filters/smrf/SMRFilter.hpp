@@ -42,8 +42,8 @@
 #include <memory>
 #include <unordered_map>
 
-extern "C" int32_t MongusFilter_ExitFunc();
-extern "C" PF_ExitFunc MongusFilter_InitPlugin();
+extern "C" int32_t SMRFilter_ExitFunc();
+extern "C" PF_ExitFunc SMRFilter_InitPlugin();
 
 namespace pdal
 {
@@ -51,12 +51,10 @@ namespace pdal
 class PointLayout;
 class PointView;
 
-typedef std::unordered_map<int, std::vector<PointId>> PointIdHash;
-
-class PDAL_DLL MongusFilter : public Filter
+class PDAL_DLL SMRFilter : public Filter
 {
 public:
-    MongusFilter() : Filter()
+    SMRFilter() : Filter()
     {}
 
     static void * create();
@@ -70,6 +68,9 @@ private:
     int m_numCols;
     int m_maxRow;
     double m_cellSize;
+    double m_percentSlope;
+    double m_maxWindow;
+    double m_threshold;
     BOX2D m_bounds;
 
     virtual void addDimensions(PointLayoutPtr layout);
@@ -77,26 +78,20 @@ private:
     int clamp(int t, int min, int max);
     int getColIndex(double x, double cell_size);
     int getRowIndex(double y, double cell_size);
+    Eigen::MatrixXd inpaint(Eigen::MatrixXd data);
     Eigen::MatrixXd TPS(Eigen::MatrixXd cx, Eigen::MatrixXd cy,
-                        Eigen::MatrixXd cz, double cell_size);
+                        Eigen::MatrixXd cz);
     void writeMatrix(Eigen::MatrixXd data, std::string filename,
                      double cell_size, PointViewPtr view);
-    void writeControl(Eigen::MatrixXd cx, Eigen::MatrixXd cy, Eigen::MatrixXd cz, std::string filename);
+    void writeControl(Eigen::MatrixXd cx, Eigen::MatrixXd cy,
+                      Eigen::MatrixXd cz, std::string filename);
     Eigen::MatrixXd padMatrix(Eigen::MatrixXd data, int radius);
     Eigen::MatrixXd matrixOpen(Eigen::MatrixXd data, int radius);
-    Eigen::MatrixXd matrixClose(Eigen::MatrixXd data, int radius);
-    Eigen::MatrixXd computeResidual(Eigen::MatrixXd cz,
-                                    Eigen::MatrixXd surface);
-    Eigen::MatrixXd computeThresholds(Eigen::MatrixXd T, int radius);
-    void downsampleMin(Eigen::MatrixXd *cx, Eigen::MatrixXd *cy,
-                       Eigen::MatrixXd* cz, Eigen::MatrixXd *dcx,
-                       Eigen::MatrixXd *dcy, Eigen::MatrixXd* dcz,
-                       double cell_size);
     std::vector<PointId> processGround(PointViewPtr view);
     virtual PointViewSet run(PointViewPtr view);
 
-    MongusFilter& operator=(const MongusFilter&); // not implemented
-    MongusFilter(const MongusFilter&); // not implemented
+    SMRFilter& operator=(const SMRFilter&); // not implemented
+    SMRFilter(const SMRFilter&); // not implemented
 };
 
 } // namespace pdal

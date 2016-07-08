@@ -49,7 +49,6 @@
 #include <ferry/FerryFilter.hpp>
 #include <hag/HAGFilter.hpp>
 #include <merge/MergeFilter.hpp>
-#include <mongus/MongusFilter.hpp>
 #include <mortonorder/MortonOrderFilter.hpp>
 #include <normal/NormalFilter.hpp>
 #include <outlier/OutlierFilter.hpp>
@@ -57,6 +56,7 @@
 #include <range/RangeFilter.hpp>
 #include <reprojection/ReprojectionFilter.hpp>
 #include <sample/SampleFilter.hpp>
+#include <smrf/SMRFilter.hpp>
 #include <sort/SortFilter.hpp>
 #include <splitter/SplitterFilter.hpp>
 #include <stats/StatsFilter.hpp>
@@ -231,7 +231,6 @@ StageFactory::StageFactory(bool no_plugins)
     PluginManager::initializePlugin(FerryFilter_InitPlugin);
     PluginManager::initializePlugin(HAGFilter_InitPlugin);
     PluginManager::initializePlugin(MergeFilter_InitPlugin);
-    PluginManager::initializePlugin(MongusFilter_InitPlugin);
     PluginManager::initializePlugin(MortonOrderFilter_InitPlugin);
     PluginManager::initializePlugin(NormalFilter_InitPlugin);
     PluginManager::initializePlugin(OutlierFilter_InitPlugin);
@@ -239,6 +238,7 @@ StageFactory::StageFactory(bool no_plugins)
     PluginManager::initializePlugin(RangeFilter_InitPlugin);
     PluginManager::initializePlugin(ReprojectionFilter_InitPlugin);
     PluginManager::initializePlugin(SampleFilter_InitPlugin);
+    PluginManager::initializePlugin(SMRFilter_InitPlugin);
     PluginManager::initializePlugin(SortFilter_InitPlugin);
     PluginManager::initializePlugin(SplitterFilter_InitPlugin);
     PluginManager::initializePlugin(StatsFilter_InitPlugin);
