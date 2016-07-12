@@ -55,6 +55,7 @@
 #include <pmf/PMFFilter.hpp>
 #include <range/RangeFilter.hpp>
 #include <reprojection/ReprojectionFilter.hpp>
+#include <rkd/RKDFilter.hpp>
 #include <sample/SampleFilter.hpp>
 #include <sort/SortFilter.hpp>
 #include <splitter/SplitterFilter.hpp>
@@ -236,6 +237,7 @@ StageFactory::StageFactory(bool no_plugins)
     PluginManager::initializePlugin(PMFFilter_InitPlugin);
     PluginManager::initializePlugin(RangeFilter_InitPlugin);
     PluginManager::initializePlugin(ReprojectionFilter_InitPlugin);
+    PluginManager::initializePlugin(RKDFilter_InitPlugin);
     PluginManager::initializePlugin(SampleFilter_InitPlugin);
     PluginManager::initializePlugin(SortFilter_InitPlugin);
     PluginManager::initializePlugin(SplitterFilter_InitPlugin);
