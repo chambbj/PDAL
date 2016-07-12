@@ -48,6 +48,7 @@
 
 namespace pdal
 {
+using namespace Eigen;
 
 static PluginInfo const s_info =
     PluginInfo("filters.smrf", "Pingel et al. (2013)",
@@ -64,6 +65,7 @@ void SMRFilter::addArgs(ProgramArgs& args)
 {
     args.add("classify", "Apply classification labels?", m_classify, true);
     args.add("extract", "Extract ground returns?", m_extract);
+    args.add("inpaint", "Inpaint?", m_inpaint, false);
     args.add("cell", "Cell size?", m_cellSize, 1.0);
     args.add("slope", "Slope?", m_percentSlope, 0.15);
     args.add("window", "Max window size?", m_maxWindow, 21.0);
@@ -90,10 +92,536 @@ int SMRFilter::getRowIndex(double y, double cell_size)
     return static_cast<int>(floor((m_maxRow - y) / cell_size));
 }
 
-Eigen::MatrixXd SMRFilter::TPS(Eigen::MatrixXd cx, Eigen::MatrixXd cy,
-                               Eigen::MatrixXd cz)
+MatrixXd SMRFilter::inpaint(MatrixXd data)
 {
-    using namespace Eigen;
+    log()->get(LogLevel::Debug) << "Inpainting...\n";
+
+    MatrixXd B = data;
+    B.resize(data.size(), 1);
+
+    MatrixXi nan_list(data.size(), 3);
+    VectorXi known_list(data.size());
+
+    int nidx = 0, kidx = 0, nmidx = 0;
+
+    for (int c = 0; c < data.cols(); ++c)
+    {
+        for (int r = 0; r < data.rows(); ++r)
+        {
+            if (std::isnan(data(r, c)))
+                nan_list.row(nidx++) << nmidx, r, c;
+            else
+                known_list.row(kidx++) << nmidx;
+            nmidx++;
+        }
+    }
+
+    nan_list.conservativeResize(nidx, NoChange);
+    known_list.conservativeResize(kidx);
+
+    int nan_count = nan_list.rows();
+    log()->get(LogLevel::Debug) << "Found " << nan_count << " NaN's\n";
+
+    MatrixXi hv_list(4, 3);
+    hv_list.row(0) <<           -1, -1,  0;
+    hv_list.row(1) <<            1,  1,  0,
+                hv_list.row(2) << -data.rows(),  0, -1,
+                hv_list.row(3) <<  data.rows(),  0,  1;
+
+    std::map<int, int> hv_springs;
+    for (int i = 0; i < 4; ++i)
+    {
+        auto hvs = nan_list + hv_list.row(i).replicate(nan_count, 1);
+        for (int j = 0; j < hvs.rows(); ++j)
+        {
+            int r = hvs(j, 1);
+            int c = hvs(j, 2);
+            if (r >= 0 && r < data.rows() && c >=0 && c < data.cols())
+            {
+                if (nan_list(j, 0) < hvs(j, 0))
+                    hv_springs[nan_list(j, 0)] = hvs(j, 0);
+                else
+                    hv_springs[hvs(j, 0)] = nan_list(j, 0);
+            }
+        }
+    }
+    log()->get(LogLevel::Debug) << "Identified " << hv_springs.size()
+                                << " unique spring connections\n";
+
+    // build sparse matrix of connections
+    MatrixXi hv_springs2(hv_springs.size(), 2);
+    int sprow = 0;
+    for (auto it = hv_springs.begin(); it != hv_springs.end(); ++it)
+        hv_springs2.row(sprow++) << it->first, it->second;
+
+    SparseMatrix<double> springs(2*hv_springs2.rows(), data.size());
+    // SparseMatrix<double> springs(data.size(), data.size());
+    // std::vector<Triplet<double> > triplets(2*hv_springs.size());
+    std::vector<Triplet<double> > triplets;
+    triplets.reserve(2*hv_springs2.rows());
+    for (int i = 0; i < hv_springs2.rows(); ++i)
+    {
+        // triplets[2*i] = Triplet<double>(i+1, hv_springs2(i, 0), 1);
+        // triplets[2*i+1] = Triplet<double>(i+1, hv_springs2(i, 1), -1);
+        triplets.push_back(Triplet<double>(i+1, hv_springs2(i, 0), 1));
+        triplets.push_back(Triplet<double>(i+1, hv_springs2(i, 1), -1));
+    }
+    springs.setFromTriplets(triplets.begin(), triplets.end());
+    springs.makeCompressed();
+
+    SparseMatrix<double> known_springs(springs.rows(), known_list.size());
+    for (int i = 0; i < known_list.size(); ++i)
+        known_springs.col(i) = springs.col(known_list(i));
+    known_springs.makeCompressed();
+
+    // eliminate knowns
+    VectorXd knowns(known_list.size());
+    for (int i = 0; i < known_list.size(); ++i)
+        knowns(i) = data(known_list(i));
+
+    auto b = -known_springs * knowns;
+
+    SparseMatrix<double> nan_springs(springs.rows(), nan_count);
+    for (int i = 0; i < nan_count; ++i)
+        nan_springs.col(i) = springs.col(nan_list(i, 0));
+    nan_springs.makeCompressed();
+
+    // solve Ax=b, replace nans with interpolated values
+    SparseQR<SparseMatrix<double>, COLAMDOrdering<int> > solver;
+    solver.compute(nan_springs);
+    if (solver.info() != Success)
+        std::cerr << "Decomposition failed!\n";
+    VectorXd x = solver.solve(b);
+    if (solver.info() != Success)
+        std::cerr << "Solving failed\n";
+    std::cerr << (nan_springs*x-b).norm()/b.norm() << std::endl;
+
+    for (int i = 0; i < nan_count; ++i)
+        B(nan_list(i, 0)) = x(i);
+    B.resize(data.rows(), data.cols());
+    return B;
+}
+
+MatrixXd SMRFilter::matrixOpen(MatrixXd data, int radius)
+{
+    log()->get(LogLevel::Debug) << "Opening...\n";
+
+    auto data2 = padMatrix(data, radius);
+
+    int nrows = data2.rows();
+    int ncols = data2.cols();
+
+    // first min, then max of min
+    MatrixXd minZ = MatrixXd::Constant(nrows, ncols,
+                                       std::numeric_limits<double>::max());
+    MatrixXd maxZ = MatrixXd::Constant(nrows, ncols,
+                                       std::numeric_limits<double>::lowest());
+    for (int c = 0; c < ncols; ++c)
+    {
+        for (int r = 0; r < nrows; ++r)
+        {
+            int cs = clamp(c-radius, 0, ncols-1);
+            int ce = clamp(c+radius, 0, ncols-1);
+            int rs = clamp(r-radius, 0, nrows-1);
+            int re = clamp(r+radius, 0, nrows-1);
+
+            for (int col = cs; col <= ce; ++col)
+            {
+                for (int row = rs; row <= re; ++row)
+                {
+                    if ((row-r)*(row-r)+(col-c)*(col-c) > radius*radius)
+                        continue;
+                    if (data2(row, col) < minZ(r, c))
+                        minZ(r, c) = data2(row, col);
+                }
+            }
+        }
+    }
+    for (int c = 0; c < ncols; ++c)
+    {
+        for (int r = 0; r < nrows; ++r)
+        {
+            int cs = clamp(c-radius, 0, ncols-1);
+            int ce = clamp(c+radius, 0, ncols-1);
+            int rs = clamp(r-radius, 0, nrows-1);
+            int re = clamp(r+radius, 0, nrows-1);
+
+            for (int col = cs; col <= ce; ++col)
+            {
+                for (int row = rs; row <= re; ++row)
+                {
+                    if ((row-r)*(row-r)+(col-c)*(col-c) > radius*radius)
+                        continue;
+                    if (minZ(row, col) > maxZ(r, c))
+                        maxZ(r, c) = minZ(row, col);
+                }
+            }
+        }
+    }
+
+    return maxZ.block(radius, radius, data.rows(), data.cols());
+}
+
+MatrixXd SMRFilter::padMatrix(MatrixXd data, int radius)
+{
+    log()->get(LogLevel::Debug) << "Padding...\n";
+
+    MatrixXd data2 = MatrixXd::Zero(data.rows()+2*radius, data.cols()+2*radius);
+    data2.block(radius, radius, data.rows(), data.cols()) = data;
+    data2.block(radius, 0, data.rows(), radius) =
+        data.block(0, 0, data.rows(), radius).rowwise().reverse();
+    data2.block(radius, data.cols()+radius, data.rows(), radius) =
+        data.block(0, data.cols()-radius, data.rows(), radius).rowwise().reverse();
+    data2.block(0, 0, radius, data2.cols()) =
+        data2.block(radius, 0, radius, data2.cols()).colwise().reverse();
+    data2.block(data.rows()+radius, 0, radius, data2.cols()) =
+        data2.block(data2.rows()-radius, 0, radius, data2.cols()).colwise().reverse();
+
+    return data2;
+}
+
+std::vector<PointId> SMRFilter::processGround(PointViewPtr view)
+{
+    log()->get(LogLevel::Debug) << "Running SMRF...\n";
+
+    // The algorithm consists of four conceptually distinct stages. The first is
+    // the creation of the minimum surface (ZImin). The second is the processing
+    // of the minimum surface, in which grid cells from the raster are
+    // identified as either containing bare earth (BE) or objects (OBJ). This
+    // second stage represents the heart of the algorithm. The third step is the
+    // creation of a DEM from these gridded points. The fourth step is the
+    // identification of the original LIDAR points as either BE or OBJ based on
+    // their relationship to the interpolated
+
+    point_count_t np(view->size());
+    std::vector<PointId> groundIdx;
+    view->calculateBounds(m_bounds);
+
+    // STEP 1:
+
+    // As with many other ground filtering algorithms, the first step is
+    // generation of ZImin from the cell size parameter and the extent of the
+    // data. The two vectors corresponding to [min:cellSize:max] for each
+    // coordinate – xi and yi – may be supplied by the user or may be easily and
+    // automatically calculated from the data. Without supplied ranges, the SMRF
+    // algorithm creates a raster from the ceiling of the minimum to the floor
+    // of the maximum values for each of the (x,y) dimensions. If the supplied
+    // cell size parameter is not an integer, the same general rule applies to
+    // values evenly divisible by the cell size. For example, if cell size is
+    // equal to 0.5 m, and the x values range from 52345.6 to 52545.4, the range
+    // would be [52346 52545].
+
+    // The minimum surface grid ZImin defined by vectors (xi,yi) is filled with
+    // the nearest, lowest elevation from the original point cloud (x,y,z)
+    // values, provided that the distance to the nearest point does not exceed
+    // the supplied cell size parameter. This provision means that some grid
+    // points of ZImin will go unfilled. To fill these values, we rely on
+    // computationally inexpensive image inpainting techniques. Image inpainting
+    // involves the replacement of the empty cells in an image (or matrix) with
+    // values calculated from other nearby values. It is a type of interpolation
+    // technique derived from artistic replacement of damaged portions of
+    // photographs and paintings, where preservation of texture is an important
+    // concern (Bertalmio et al., 2000). When empty values are spread through
+    // the image, and the ratio of filled to empty pixels is quite high, most
+    // methods of inpainting will produce satisfactory results. In an evaluation
+    // of inpainting methods on ground identification from the final terrain
+    // model, we found that Laplacian techniques produced error rates nearly
+    // three times higher than either an average of the eight nearest neighbors
+    // or D’Errico’s spring-metaphor inpainting technique (D’Errico, 2004). The
+    // spring-metaphor technique imagines springs connecting each cell with its
+    // eight adjacent neighbors, where the inpainted value corresponds to the
+    // lowest energy state of the set, and where the entire (sparse) set of
+    // linear equations is solved using partial differential equations. Both of
+    // these latter techniques were nearly the same with regards to total error,
+    // with the spring technique performing slightly better than the k-nearest
+    // neighbor (KNN) approach.
+
+    double extent_x = floor(m_bounds.maxx) - ceil(m_bounds.minx);
+    double extent_y = floor(m_bounds.maxy) - ceil(m_bounds.miny);
+
+    m_numCols = static_cast<int>(ceil(extent_x/m_cellSize)) + 1;
+    m_numRows = static_cast<int>(ceil(extent_y/m_cellSize)) + 1;
+    m_maxRow = m_bounds.miny + m_numRows * m_cellSize;
+
+    MatrixXd ZImin(m_numRows, m_numCols);
+    ZImin.setConstant(std::numeric_limits<double>::quiet_NaN());
+
+    MatrixXd cx(m_numRows, m_numCols);
+    cx.setConstant(std::numeric_limits<double>::quiet_NaN());
+
+    MatrixXd cy(m_numRows, m_numCols);
+    cy.setConstant(std::numeric_limits<double>::quiet_NaN());
+
+    for (PointId i = 0; i < np; ++i)
+    {
+        using namespace Dimension::Id;
+        double x = view->getFieldAs<double>(X, i);
+        double y = view->getFieldAs<double>(Y, i);
+        double z = view->getFieldAs<double>(Z, i);
+
+        int c = clamp(getColIndex(x, m_cellSize), 0, m_numCols-1);
+        int r = clamp(getRowIndex(y, m_cellSize), 0, m_numRows-1);
+
+        if (z < ZImin(r, c) || std::isnan(ZImin(r, c)))
+        {
+            cx(r, c) = x;
+            cy(r, c) = y;
+            ZImin(r, c) = z;
+        }
+    }
+    writeMatrix(ZImin, "zimin.tif", m_cellSize, view);
+
+    if (m_inpaint)
+    {
+        auto ZImin_painted = inpaint(ZImin);
+        writeMatrix(ZImin_painted, "zimin_painted.tif", m_cellSize, view);
+
+        // for (int i = 0; i < ZImin.size(); ++i)
+        // {
+        //     if (std::isnan(ZImin(i)))
+        //         ZImin(i) = ZImin_painted(i);
+        // }
+        ZImin = ZImin_painted;
+    }
+
+    // STEP 2:
+
+    // The second stage of the ground identification algorithm involves the
+    // application of a progressive morphological filter to the minimum surface
+    // grid (ZImin). At the first iteration, the filter applies an image opening
+    // operation to the minimum surface. An opening operation consists of an
+    // application of an erosion filter followed by a dilation filter. The
+    // erosion acts to snap relative high values to relative lows, where a
+    // supplied window radius and shape (or structuring element) defines the
+    // search neighborhood. The dilation uses the same window radius and
+    // structuring element, acting to outwardly expand relative highs. Fig. 2
+    // illustrates an opening operation on a cross section of a transect from
+    // Sample 1–1 in the ISPRS LIDAR reference dataset (Sithole and Vosselman,
+    // 2003), following Zhang et al. (2003).
+
+    MatrixXi Obj(m_numRows, m_numCols);
+    Obj.setZero();
+
+    // In this case, we selected a disk-shaped structuring element, and the
+    // radius of the element at each step was increased by one pixel from a
+    // starting value of one pixel to the pixel equivalent of the maximum value
+    // (wkmax). The maximum window radius is supplied as a distance metric
+    // (e.g., 21 m), but is internally converted to a pixel equivalent by
+    // dividing it by the cell size and rounding the result toward positive
+    // infinity (i.e., taking the ceiling value). For example, for a supplied
+    // maximum window radius of 21 m, and a cell size of 2m per pixel, the
+    // result would be a maximum window radius of 11 pixels. While this
+    // represents a relatively slow progression in the expansion of the window
+    // radius, we believe that the high efficiency associated with the opening
+    // operation mitigates the potential for computational waste. The
+    // improvements in classification accuracy using slow, linear progressions
+    // are documented in the next section.
+    int max_radius = ceil(m_maxWindow/m_cellSize);
+    auto ZIlocal = ZImin;
+    for (int radius = 1; radius < max_radius; ++radius)
+    {
+        log()->get(LogLevel::Debug) << "Radius = " << radius << std::endl;
+
+        // On the first iteration, the minimum surface (ZImin) is opened using a
+        // disk-shaped structuring element with a radius of one pixel.
+        auto mo = matrixOpen(ZIlocal, radius);
+
+        // An elevation threshold is then calculated, where the value is equal
+        // to the supplied slope tolerance parameter multiplied by the product
+        // of the window radius and the cell size. For example, if the user
+        // supplied a slope tolerance parameter of 15%, a cell size of 2m per
+        // pixel, the elevation threshold would be 0.3m at a window of one pixel
+        // (0.15 ? 1 ? 2).
+        double threshold = m_percentSlope * m_cellSize * radius;
+
+        // This elevation threshold is applied to the difference of the minimum
+        // and the opened surfaces.
+        auto diff = ZIlocal - mo;
+
+        // Any grid cell with a difference value exceeding the calculated
+        // elevation threshold for the iteration is then flagged as an OBJ cell.
+        for (int i = 0; i < diff.size(); ++i)
+        {
+            if (diff(i) > threshold)
+                Obj(i) = 1;
+        }
+        // writeMatrix(Obj, "obj.tif", m_cellSize, view);
+
+        // The algorithm then proceeds to the next window radius (up to the
+        // maximum), and proceeds as above with the last opened surface acting
+        // as the ‘‘minimum surface’’ for the next difference calculation.
+        ZIlocal = mo;
+    }
+
+    // STEP 3:
+
+    // The end result of the iteration process described above is a binary grid
+    // where each cell is classified as being either bare earth (BE) or object
+    // (OBJ). The algorithm then applies this mask to the starting minimum
+    // surface to eliminate nonground cells. These cells are then inpainted
+    // according to the same process described previously, producing a
+    // provisional DEM (ZIpro).
+
+    // MatrixXd ZIpro(m_numRows, m_numCols);
+    // ZIpro.setConstant(std::numeric_limits<float>::min()); // NODATA = FLT_MIN
+    MatrixXd ZIpro = ZImin;
+    for (int i = 0; i < Obj.size(); ++i)
+    {
+        if (Obj(i) == 1)
+            ZIpro(i) = std::numeric_limits<double>::quiet_NaN();
+    }
+    writeMatrix(ZIpro, "zipro.tif", m_cellSize, view);
+
+    if (m_inpaint)
+    {
+        auto ZIpro_painted = inpaint(ZIpro);
+        writeMatrix(ZIpro_painted, "zipro_painted.tif", m_cellSize, view);
+
+        // for (int i = 0; i < ZIpro.size(); ++i)
+        // {
+        //     if (std::isnan(ZIpro(i)))
+        //         ZIpro(i) = ZIpro_painted(i);
+        // }
+        ZIpro = ZIpro_painted;
+    }
+
+    // STEP 4:
+
+    // The final step of the algorithm is the identification of ground/object
+    // LIDAR points. This is accomplished by measuring the vertical distance
+    // between each LIDAR point and the provisional DEM, and applying a
+    // threshold calculation. While many authors use a single value for the
+    // elevation threshold, we suggest that a second parameter be used to
+    // increase the threshold on steep slopes, transforming the threshold to a
+    // slope-dependent value. The total permissible distance is then equal to a
+    // fixed elevation threshold plus the scaling value multiplied by the slope
+    // of the DEM at each LIDAR point. The rationale behind this approach is
+    // that small horizontal and vertical displacements yield larger errors on
+    // steep slopes, and as a result the BE/OBJ threshold distance should be
+    // more per- missive at these points.
+
+    // The calculation requires that both elevation and slope are interpolated
+    // from the provisional DEM. There are any number of interpolation
+    // techniques that might be used, and even nearest neighbor approaches work
+    // quite well, so long as the cell size of the DEM nearly corresponds to the
+    // resolution of the LIDAR data. A comparison of how well these different
+    // methods of interpolation perform is given in the next section. Based on
+    // these results, we find that a splined cubic interpolation provides the
+    // best results.
+
+    // It is common in LIDAR point clouds to have a small number of outliers
+    // which may be either above or below the terrain surface. While
+    // above-ground outliers (e.g., a random return from a bird in flight) are
+    // filtered during the normal algorithm routine, the below-ground outliers
+    // (e.g., those caused by a reflection) require a separate approach. Early
+    // in the routine and along a separate processing fork, the minimum surface
+    // is checked for low outliers by inverting the point cloud in the z-axis
+    // and applying the filter with parameters (slope = 500%, maxWindowSize =
+    // 1). The resulting mask is used to flag low outlier cells as OBJ before
+    // the inpainting of the provisional DEM. This outlier identification
+    // methodology is functionally the same as that of Zhang et al. (2003).
+
+    // The provisional DEM (ZIpro), created by removing OBJ cells from the
+    // original minimum surface (ZImin) and then inpainting, tends to be less
+    // smooth than one might wish, especially when the surfaces are to be used
+    // to create visual products like immersive geographic virtual environments.
+    // As a result, it is often worthwhile to reinter- polate a final DEM from
+    // the identified ground points of the original LIDAR data (ZIfin). Surfaces
+    // created from these data tend to be smoother and more visually satisfying
+    // than those derived from the provisional DEM.
+
+    // Very large (>40m in length) buildings can sometimes prove troublesome to
+    // remove on highly differentiated terrain. To accommodate the removal of
+    // such objects, we implemented a feature in the published SMRF algorithm
+    // which is helpful in removing such features. We accomplish this by
+    // introducing into the initial minimum surface a ‘‘net’’ of minimum values
+    // at a spacing equal to the maximum window diameter, where these minimum
+    // values are found by applying a morphological open operation with a disk
+    // shaped structuring element of radius (2?wkmax). Since only one example in
+    // this dataset had features this large (Sample 4–2, a trainyard) we did not
+    // include this portion of the algorithm in the formal testing procedure,
+    // though we provide a brief analysis of the effect of using this net filter
+    // in the next section.
+
+    for (PointId i = 0; i < np; ++i)
+    {
+        using namespace Dimension::Id;
+        double x = view->getFieldAs<double>(X, i);
+        double y = view->getFieldAs<double>(Y, i);
+        double z = view->getFieldAs<double>(Z, i);
+
+        int c = clamp(getColIndex(x, m_cellSize), 0, m_numCols-1);
+        int r = clamp(getRowIndex(y, m_cellSize), 0, m_numRows-1);
+
+        double res = z - ZIpro(r, c);
+        if (res < m_threshold)
+            groundIdx.push_back(i);
+    }
+
+    return groundIdx;
+}
+
+PointViewSet SMRFilter::run(PointViewPtr view)
+{
+    bool logOutput = log()->getLevel() > LogLevel::Debug1;
+    if (logOutput)
+        log()->floatPrecision(8);
+    log()->get(LogLevel::Debug2) << "Process SMRFilter...\n";
+
+    auto idx = processGround(view);
+
+    PointViewSet viewSet;
+
+    if (!idx.empty() && (m_classify || m_extract))
+    {
+
+        if (m_classify)
+        {
+            log()->get(LogLevel::Debug2) << "Labeled " << idx.size() << " ground returns!\n";
+
+            // set the classification label of ground returns as 2
+            // (corresponding to ASPRS LAS specification)
+            for (const auto& i : idx)
+            {
+                view->setField(Dimension::Id::Classification, i, 2);
+            }
+
+            viewSet.insert(view);
+        }
+
+        if (m_extract)
+        {
+            log()->get(LogLevel::Debug2) << "Extracted " << idx.size() << " ground returns!\n";
+
+            // create new PointView containing only ground returns
+            PointViewPtr output = view->makeNew();
+            for (const auto& i : idx)
+            {
+                output->appendPoint(*view, i);
+            }
+
+            viewSet.erase(view);
+            viewSet.insert(output);
+        }
+    }
+    else
+    {
+        if (idx.empty())
+            log()->get(LogLevel::Debug2) << "Filtered cloud has no ground returns!\n";
+
+        if (!(m_classify || m_extract))
+            log()->get(LogLevel::Debug2) << "Must choose --classify or --extract\n";
+
+        // return the view buffer unchanged
+        viewSet.insert(view);
+    }
+
+    return viewSet;
+}
+
+MatrixXd SMRFilter::TPS(MatrixXd cx, MatrixXd cy, MatrixXd cz)
+{
+    log()->get(LogLevel::Debug) << "Reticulating splines...\n";
 
     MatrixXd S = MatrixXd::Zero(m_numRows, m_numCols);
 
@@ -242,7 +770,39 @@ Eigen::MatrixXd SMRFilter::TPS(Eigen::MatrixXd cx, Eigen::MatrixXd cy,
     return S;
 }
 
-void SMRFilter::writeMatrix(Eigen::MatrixXd data, std::string filename, double cell_size, PointViewPtr view)
+void SMRFilter::writeControl(MatrixXd cx, MatrixXd cy, MatrixXd cz, std::string filename)
+{
+    PipelineManager m;
+
+    PointTable table;
+    PointViewPtr view(new PointView(table));
+
+    table.layout()->registerDim(Dimension::Id::X);
+    table.layout()->registerDim(Dimension::Id::Y);
+    table.layout()->registerDim(Dimension::Id::Z);
+
+    PointId i = 0;
+    for (int j = 0; j < cz.size(); ++j)
+    {
+        if (std::isnan(cx(j)) || std::isnan(cy(j)))
+            continue;
+        if (cz(j) == std::numeric_limits<double>::max())
+            continue;
+        view->setField(Dimension::Id::X, i, cx(j));
+        view->setField(Dimension::Id::Y, i, cy(j));
+        view->setField(Dimension::Id::Z, i, cz(j));
+        i++;
+    }
+
+    BufferReader r;
+    r.addView(view);
+
+    Stage& w = m.makeWriter(filename, "writers.las", r);
+    w.prepare(table);
+    w.execute(table);
+}
+
+void SMRFilter::writeMatrix(MatrixXd data, std::string filename, double cell_size, PointViewPtr view)
 {
     int cols = data.cols();
     int rows = data.rows();
@@ -332,760 +892,6 @@ void SMRFilter::writeMatrix(Eigen::MatrixXd data, std::string filename, double c
 
         delete [] poRasterData;
     }
-}
-
-void SMRFilter::writeControl(Eigen::MatrixXd cx, Eigen::MatrixXd cy, Eigen::MatrixXd cz, std::string filename)
-{
-    PipelineManager m;
-
-    PointTable table;
-    PointViewPtr view(new PointView(table));
-
-    table.layout()->registerDim(Dimension::Id::X);
-    table.layout()->registerDim(Dimension::Id::Y);
-    table.layout()->registerDim(Dimension::Id::Z);
-
-    PointId i = 0;
-    for (int j = 0; j < cz.size(); ++j)
-    {
-        if (std::isnan(cx(j)) || std::isnan(cy(j)))
-            continue;
-        if (cz(j) == std::numeric_limits<double>::max())
-            continue;
-        view->setField(Dimension::Id::X, i, cx(j));
-        view->setField(Dimension::Id::Y, i, cy(j));
-        view->setField(Dimension::Id::Z, i, cz(j));
-        i++;
-    }
-
-    BufferReader r;
-    r.addView(view);
-
-    Stage& w = m.makeWriter(filename, "writers.las", r);
-    w.prepare(table);
-    w.execute(table);
-}
-
-Eigen::MatrixXd SMRFilter::inpaint(Eigen::MatrixXd data)
-{
-    log()->get(LogLevel::Debug) << "D'Errico's Spring Metaphor Inpainting\n";
-    
-    using namespace Eigen;
-    
-    MatrixXd B = data;
-    B.resize(data.size(), 1);
-    
-    MatrixXi nan_list(data.size(), 3);
-    VectorXi known_list(data.size());
-    
-    int nidx = 0, kidx = 0, nmidx = 0;
-    
-    for (int c = 0; c < data.cols(); ++c)
-    {
-        for (int r = 0; r < data.rows(); ++r)
-        {
-            if (std::isnan(data(r, c)))
-                nan_list.row(nidx++) << nmidx, r, c;
-            else
-                known_list.row(kidx++) << nmidx;
-            nmidx++;
-        }
-    }
-    
-    nan_list.conservativeResize(nidx, NoChange);
-    known_list.conservativeResize(kidx);
-    
-    int nan_count = nan_list.rows();
-    log()->get(LogLevel::Debug) << "Found " << nan_count << " NaN's\n";
-    
-    MatrixXi hv_list(4, 3);
-    hv_list << -1,           -1,  0,
-                1,            1,  0,
-               -data.rows(),  0, -1,
-                data.rows(),  0,  1;
-    
-    std::map<int, int> hv_springs;            
-    for (int i = 0; i < 4; ++i)
-    {
-        auto hvs = nan_list + hv_list.row(i).replicate(nan_count, 1);
-        for (int j = 0; j < hvs.rows(); ++j)
-        {
-            int r = hvs(j, 1);
-            int c = hvs(j, 2);
-            if (r >= 0 && r < data.rows() && c >=0 && c < data.cols())
-            {
-              // std::cerr << nan_list.row(j) << std::endl;
-              // std::cerr << hvs.row(j) << std::endl;
-                if (nan_list(j, 0) < hvs(j, 0))
-                    hv_springs[nan_list(j, 0)] = hvs(j, 0);
-                else
-                    hv_springs[hvs(j, 0)] = nan_list(j, 0);
-            }
-        }
-    }
-    log()->get(LogLevel::Debug) << "Identified " << hv_springs.size()
-                                << " unique spring connections\n";
-    
-    // build sparse matrix of connections
-    std::cerr << "springs matrix\n";
-    MatrixXi hv_springs2(hv_springs.size(), 2);
-    int sprow = 0;
-    for (auto it = hv_springs.begin(); it != hv_springs.end(); ++it)
-    {
-        // std::cerr << it->first << "\t" << it->second << std::endl;
-        hv_springs2.row(sprow++) << it->first, it->second;
-    }
-    std::cerr << sprow << std::endl;
-    
-    std::cerr << "springs sparse matrix\n";
-    std::cerr << hv_springs2.rows() << "\t" << data.size() << std::endl;
-    SparseMatrix<double> springs(2*hv_springs2.rows(), data.size());
-    // SparseMatrix<double> springs(data.size(), data.size());
-    // std::vector<Triplet<double> > triplets(2*hv_springs.size());
-    std::vector<Triplet<double> > triplets;
-    triplets.reserve(2*hv_springs2.rows());
-    std::cerr << triplets.size() << std::endl;
-    for (int i = 0; i < hv_springs2.rows(); ++i)
-    {
-        // std::cerr << 2*i << "\t" << i+1 << "\t" << hv_springs2(i, 0) << "\t" << 1 << std::endl;
-        // std::cerr << 2*i+1 << "\t" << i+1 << "\t" << hv_springs2(i, 1) << "\t" << -1 << std::endl;
-        // triplets[2*i] = Triplet<double>(i+1, hv_springs2(i, 0), 1);
-        // triplets[2*i+1] = Triplet<double>(i+1, hv_springs2(i, 1), -1);
-        
-        triplets.push_back(Triplet<double>(i+1, hv_springs2(i, 0), 1));
-        triplets.push_back(Triplet<double>(i+1, hv_springs2(i, 1), -1));
-    }
-    std::cerr << triplets.size() << std::endl;
-    std::cerr << "set triplets\n";
-    springs.setFromTriplets(triplets.begin(), triplets.end());
-    std::cerr << "compress\n";
-    springs.makeCompressed();
-    std::cerr << springs.rows() << "\t" << springs.cols() << "\t" << springs.nonZeros() << "\t" << springs.size() << std::endl;
-    
-    std::cerr << "known springs\n";
-    std::cerr << springs.rows() << "\t" << known_list.size() << std::endl;
-    SparseMatrix<double> known_springs(springs.rows(), known_list.size());
-    for (int i = 0; i < known_list.size(); ++i)
-    {
-        std::cerr << i << "\t" << known_list(i) << std::endl;
-        known_springs.col(i) = springs.col(known_list(i));
-      }
-    known_springs.makeCompressed();
-    
-    // eliminate knowns
-    std::cerr << "knowns\n";
-    VectorXd knowns(known_list.size());
-    for (int i = 0; i < known_list.size(); ++i)
-        knowns(i) = data(known_list(i));
-    
-    std::cerr << "b\n";
-    auto b = -known_springs * knowns;
-    
-    // std::cerr << b.transpose() << std::endl;
-    
-    std::cerr << "nan_springs\n";
-    SparseMatrix<double> nan_springs(springs.rows(), nan_count);
-    for (int i = 0; i < nan_count; ++i)
-        nan_springs.col(i) = springs.col(nan_list(i, 0));
-    nan_springs.makeCompressed();
-    std::cerr << nan_springs.rows() << "\t" << nan_springs.cols() << "\t" << nan_springs.nonZeros() << "\t" << nan_springs.size() << std::endl;
-    
-    // solve Ax=b, replace nans with interpolated values
-    SparseQR<SparseMatrix<double>, COLAMDOrdering<int> > solver;
-    std::cerr << "compute\n";
-    solver.compute(nan_springs);
-    if (solver.info() != Success)
-      std::cerr << "Decomposition failed!\n";
-    std::cerr << "solve\n";
-    VectorXd x = solver.solve(b);
-    if (solver.info() != Success)
-        std::cerr << "Solving failed\n";
-    std::cerr << (nan_springs*x-b).norm()/b.norm() << std::endl;
-    std::cerr << nan_count << "\t" << x.size() << "\t" << b.rows() << "\t" << b.cols() << std::endl;
-    
-    std::cerr << x.transpose() << std::endl;
-    
-    for (int i = 0; i < nan_count; ++i)
-    {
-        // std::cerr << i << "\t" << B.size() << "\t" << x.size() << "\t" << nan_list(i, 0) << "\t" << x(i) << std::endl;
-        // if (x(i) > 0.0)
-            B(nan_list(i, 0)) = x(i);
-    }
-    B.resize(data.rows(), data.cols());
-    return B;
-}
-
-std::vector<PointId> SMRFilter::processGround(PointViewPtr view)
-{
-    // The algorithm consists of four conceptually distinct stages. The first is
-    // the creation of the minimum surface (ZImin). The second is the processing
-    // of the minimum surface, in which grid cells from the raster are
-    // identified as either containing bare earth (BE) or objects (OBJ). This
-    // second stage represents the heart of the algorithm. The third step is the
-    // creation of a DEM from these gridded points. The fourth step is the
-    // identification of the original LIDAR points as either BE or OBJ based on
-    // their relationship to the interpolated
-    
-    using namespace Eigen;
-
-    point_count_t np(view->size());
-    std::vector<PointId> groundIdx;
-    view->calculateBounds(m_bounds);
-
-    // STEP 1:
-    
-    // As with many other ground filtering algorithms, the first step is
-    // generation of ZImin from the cell size parameter and the extent of the
-    // data. The two vectors corresponding to [min:cellSize:max] for each
-    // coordinate – xi and yi – may be supplied by the user or may be easily and
-    // automatically calculated from the data. Without supplied ranges, the SMRF
-    // algorithm creates a raster from the ceiling of the minimum to the floor
-    // of the maximum values for each of the (x,y) dimensions. If the supplied
-    // cell size parameter is not an integer, the same general rule applies to
-    // values evenly divisible by the cell size. For example, if cell size is
-    // equal to 0.5 m, and the x values range from 52345.6 to 52545.4, the range
-    // would be [52346 52545].
-    
-    // The minimum surface grid ZImin defined by vectors (xi,yi) is filled with
-    // the nearest, lowest elevation from the original point cloud (x,y,z)
-    // values, provided that the distance to the nearest point does not exceed
-    // the supplied cell size parameter. This provision means that some grid
-    // points of ZImin will go unfilled. To fill these values, we rely on
-    // computationally inexpensive image inpainting techniques. Image inpainting
-    // involves the replacement of the empty cells in an image (or matrix) with
-    // values calculated from other nearby values. It is a type of interpolation
-    // technique derived from artistic replacement of damaged portions of
-    // photographs and paintings, where preservation of texture is an important
-    // concern (Bertalmio et al., 2000). When empty values are spread through
-    // the image, and the ratio of filled to empty pixels is quite high, most
-    // methods of inpainting will produce satisfactory results. In an evaluation
-    // of inpainting methods on ground identification from the final terrain
-    // model, we found that Laplacian techniques produced error rates nearly
-    // three times higher than either an average of the eight nearest neighbors
-    // or D’Errico’s spring-metaphor inpainting technique (D’Errico, 2004). The
-    // spring-metaphor technique imagines springs connecting each cell with its
-    // eight adjacent neighbors, where the inpainted value corresponds to the
-    // lowest energy state of the set, and where the entire (sparse) set of
-    // linear equations is solved using partial differential equations. Both of
-    // these latter techniques were nearly the same with regards to total error,
-    // with the spring technique performing slightly better than the k-nearest
-    // neighbor (KNN) approach.
-    
-    double extent_x = floor(m_bounds.maxx) - ceil(m_bounds.minx);
-    double extent_y = floor(m_bounds.maxy) - ceil(m_bounds.miny);
-    
-    m_numCols = static_cast<int>(ceil(extent_x/m_cellSize)) + 1;
-    m_numRows = static_cast<int>(ceil(extent_y/m_cellSize)) + 1;
-    m_maxRow = m_bounds.miny + m_numRows * m_cellSize;
-
-    MatrixXd ZImin(m_numRows, m_numCols);
-    ZImin.setConstant(std::numeric_limits<double>::quiet_NaN());
-    
-    MatrixXd cx(m_numRows, m_numCols);
-    cx.setConstant(std::numeric_limits<double>::quiet_NaN());
-
-    MatrixXd cy(m_numRows, m_numCols);
-    cy.setConstant(std::numeric_limits<double>::quiet_NaN());
-    
-    for (PointId i = 0; i < np; ++i)
-    {
-        using namespace Dimension::Id;
-        double x = view->getFieldAs<double>(X, i);
-        double y = view->getFieldAs<double>(Y, i);
-        double z = view->getFieldAs<double>(Z, i);
-
-        int c = clamp(getColIndex(x, m_cellSize), 0, m_numCols-1);
-        int r = clamp(getRowIndex(y, m_cellSize), 0, m_numRows-1);
-
-        if (z < ZImin(r, c) || std::isnan(ZImin(r, c)))
-        {
-            cx(r, c) = x;
-            cy(r, c) = y;
-            ZImin(r, c) = z;
-        }
-    }
-    writeMatrix(ZImin, "zimin.tif", m_cellSize, view);
-    
-    auto ZImin_painted = inpaint(ZImin);
-    writeMatrix(ZImin_painted, "zimin_painted.tif", m_cellSize, view);
-    
-    // for (int i = 0; i < ZImin.size(); ++i)
-    // {
-    //     if (std::isnan(ZImin(i)))
-    //         ZImin(i) = ZImin_painted(i);
-    // }
-    ZImin = ZImin_painted;
-    
-    // STEP 2:
-    
-    // The second stage of the ground identification algorithm involves the
-    // application of a progressive morphological filter to the minimum surface
-    // grid (ZImin). At the first iteration, the filter applies an image opening
-    // operation to the minimum surface. An opening operation consists of an
-    // application of an erosion filter followed by a dilation filter. The
-    // erosion acts to snap relative high values to relative lows, where a
-    // supplied window radius and shape (or structuring element) defines the
-    // search neighborhood. The dilation uses the same window radius and
-    // structuring element, acting to outwardly expand relative highs. Fig. 2
-    // illustrates an opening operation on a cross section of a transect from
-    // Sample 1–1 in the ISPRS LIDAR reference dataset (Sithole and Vosselman,
-    // 2003), following Zhang et al. (2003).
-    
-    MatrixXi Obj(m_numRows, m_numCols);
-    Obj.setZero();
-    
-    // In this case, we selected a disk-shaped structuring element, and the
-    // radius of the element at each step was increased by one pixel from a
-    // starting value of one pixel to the pixel equivalent of the maximum value
-    // (wkmax). The maximum window radius is supplied as a distance metric
-    // (e.g., 21 m), but is internally converted to a pixel equivalent by
-    // dividing it by the cell size and rounding the result toward positive
-    // infinity (i.e., taking the ceiling value). For example, for a supplied
-    // maximum window radius of 21 m, and a cell size of 2m per pixel, the
-    // result would be a maximum window radius of 11 pixels. While this
-    // represents a relatively slow progression in the expansion of the window
-    // radius, we believe that the high efficiency associated with the opening
-    // operation mitigates the potential for computational waste. The
-    // improvements in classification accuracy using slow, linear progressions
-    // are documented in the next section.
-    int max_radius = ceil(m_maxWindow/m_cellSize);
-    auto ZIlocal = ZImin;
-    for (int radius = 1; radius < max_radius; ++radius)
-    {
-        std::cerr << "Radius = " << radius << std::endl;
-        
-        // On the first iteration, the minimum surface (ZImin) is opened using a
-        // disk-shaped structuring element with a radius of one pixel.
-        auto mo = matrixOpen(ZIlocal, radius);
-        
-        // An elevation threshold is then calculated, where the value is equal
-        // to the supplied slope tolerance parameter multiplied by the product
-        // of the window radius and the cell size. For example, if the user
-        // supplied a slope tolerance parameter of 15%, a cell size of 2m per
-        // pixel, the elevation threshold would be 0.3m at a window of one pixel
-        // (0.15 ? 1 ? 2).
-        double threshold = m_percentSlope * m_cellSize * radius;
-        
-        // This elevation threshold is applied to the difference of the minimum
-        // and the opened surfaces.
-        auto diff = ZIlocal - mo;
-      
-        // Any grid cell with a difference value exceeding the calculated
-        // elevation threshold for the iteration is then flagged as an OBJ cell.
-        for (int i = 0; i < diff.size(); ++i)
-        {
-            if (diff(i) > threshold)
-                Obj(i) = 1;
-        }
-        // writeMatrix(Obj, "obj.tif", m_cellSize, view);
-        
-        // The algorithm then proceeds to the next window radius (up to the
-        // maximum), and proceeds as above with the last opened surface acting
-        // as the ‘‘minimum surface’’ for the next difference calculation.
-        ZIlocal = mo;
-    }
-    
-    // STEP 3:
-    
-    // The end result of the iteration process described above is a binary grid
-    // where each cell is classified as being either bare earth (BE) or object
-    // (OBJ). The algorithm then applies this mask to the starting minimum
-    // surface to eliminate nonground cells. These cells are then inpainted
-    // according to the same process described previously, producing a
-    // provisional DEM (ZIpro).
-    
-    // MatrixXd ZIpro(m_numRows, m_numCols);
-    // ZIpro.setConstant(std::numeric_limits<float>::min()); // NODATA = FLT_MIN
-    MatrixXd ZIpro = ZImin;
-    for (int i = 0; i < Obj.size(); ++i)
-    {
-        if (Obj(i) == 1)
-            ZIpro(i) = std::numeric_limits<double>::quiet_NaN();
-    }
-    writeMatrix(ZIpro, "zipro.tif", m_cellSize, view);
-    
-    auto ZIpro_painted = inpaint(ZIpro);
-    writeMatrix(ZIpro_painted, "zipro_painted.tif", m_cellSize, view);
-    
-    // for (int i = 0; i < ZIpro.size(); ++i)
-    // {
-    //     if (std::isnan(ZIpro(i)))
-    //         ZIpro(i) = ZIpro_painted(i);
-    // }
-    ZIpro = ZIpro_painted;
-    
-    // STEP 4:
-    
-    // The final step of the algorithm is the identification of ground/object
-    // LIDAR points. This is accomplished by measuring the vertical distance
-    // between each LIDAR point and the provisional DEM, and applying a
-    // threshold calculation. While many authors use a single value for the
-    // elevation threshold, we suggest that a second parameter be used to
-    // increase the threshold on steep slopes, transforming the threshold to a
-    // slope-dependent value. The total permissible distance is then equal to a
-    // fixed elevation threshold plus the scaling value multiplied by the slope
-    // of the DEM at each LIDAR point. The rationale behind this approach is
-    // that small horizontal and vertical displacements yield larger errors on
-    // steep slopes, and as a result the BE/OBJ threshold distance should be
-    // more per- missive at these points.
-    
-    // The calculation requires that both elevation and slope are interpolated
-    // from the provisional DEM. There are any number of interpolation
-    // techniques that might be used, and even nearest neighbor approaches work
-    // quite well, so long as the cell size of the DEM nearly corresponds to the
-    // resolution of the LIDAR data. A comparison of how well these different
-    // methods of interpolation perform is given in the next section. Based on
-    // these results, we find that a splined cubic interpolation provides the
-    // best results.
-    
-    // It is common in LIDAR point clouds to have a small number of outliers
-    // which may be either above or below the terrain surface. While
-    // above-ground outliers (e.g., a random return from a bird in flight) are
-    // filtered during the normal algorithm routine, the below-ground outliers
-    // (e.g., those caused by a reflection) require a separate approach. Early
-    // in the routine and along a separate processing fork, the minimum surface
-    // is checked for low outliers by inverting the point cloud in the z-axis
-    // and applying the filter with parameters (slope = 500%, maxWindowSize =
-    // 1). The resulting mask is used to flag low outlier cells as OBJ before
-    // the inpainting of the provisional DEM. This outlier identification
-    // methodology is functionally the same as that of Zhang et al. (2003).
-    
-    // The provisional DEM (ZIpro), created by removing OBJ cells from the
-    // original minimum surface (ZImin) and then inpainting, tends to be less
-    // smooth than one might wish, especially when the surfaces are to be used
-    // to create visual products like immersive geographic virtual environments.
-    // As a result, it is often worthwhile to reinter- polate a final DEM from
-    // the identified ground points of the original LIDAR data (ZIfin). Surfaces
-    // created from these data tend to be smoother and more visually satisfying
-    // than those derived from the provisional DEM.
-    
-    // Very large (>40m in length) buildings can sometimes prove troublesome to
-    // remove on highly differentiated terrain. To accommodate the removal of
-    // such objects, we implemented a feature in the published SMRF algorithm
-    // which is helpful in removing such features. We accomplish this by
-    // introducing into the initial minimum surface a ‘‘net’’ of minimum values
-    // at a spacing equal to the maximum window diameter, where these minimum
-    // values are found by applying a morphological open operation with a disk
-    // shaped structuring element of radius (2?wkmax). Since only one example in
-    // this dataset had features this large (Sample 4–2, a trainyard) we did not
-    // include this portion of the algorithm in the formal testing procedure,
-    // though we provide a brief analysis of the effect of using this net filter
-    // in the next section.
-    
-    for (PointId i = 0; i < np; ++i)
-    {
-        using namespace Dimension::Id;
-        double x = view->getFieldAs<double>(X, i);
-        double y = view->getFieldAs<double>(Y, i);
-        double z = view->getFieldAs<double>(Z, i);
-    
-        int c = clamp(getColIndex(x, m_cellSize), 0, m_numCols-1);
-        int r = clamp(getRowIndex(y, m_cellSize), 0, m_numRows-1);
-    
-        double res = z - ZIpro(r, c);
-        if (res < m_threshold)
-            groundIdx.push_back(i);
-    }
-
-    return groundIdx;
-}
-
-// void SMRFilter::downsampleMin(Eigen::MatrixXd *cx, Eigen::MatrixXd *cy,
-//                                  Eigen::MatrixXd* cz, Eigen::MatrixXd *dcx,
-//                                  Eigen::MatrixXd *dcy, Eigen::MatrixXd* dcz,
-//                                  double cell_size)
-// {
-//     int nr = ceil(cz->rows() / cell_size);
-//     int nc = ceil(cz->cols() / cell_size);
-// 
-//     std::cerr << nr << "\t" << nc << "\t" << cell_size << std::endl;
-// 
-//     dcx->resize(nr, nc);
-//     dcx->setConstant(std::numeric_limits<double>::quiet_NaN());
-// 
-//     dcy->resize(nr, nc);
-//     dcy->setConstant(std::numeric_limits<double>::quiet_NaN());
-// 
-//     dcz->resize(nr, nc);
-//     dcz->setConstant(std::numeric_limits<double>::max());
-// 
-//     for (int c = 0; c < cz->cols(); ++c)
-//     {
-//         for (int r = 0; r < cz->rows(); ++r)
-//         {
-//             if ((*cz)(r, c) == std::numeric_limits<double>::max())
-//                 continue;
-// 
-//             int rr = std::floor(r/cell_size);
-//             int cc = std::floor(c/cell_size);
-// 
-//             if ((*cz)(r, c) < (*dcz)(rr, cc))
-//             {
-//                 (*dcx)(rr, cc) = (*cx)(r, c);
-//                 (*dcy)(rr, cc) = (*cy)(r, c);
-//                 (*dcz)(rr, cc) = (*cz)(r, c);
-//             }
-//         }
-//     }
-// }
-// 
-// Eigen::MatrixXd SMRFilter::computeResidual(Eigen::MatrixXd cz,
-//         Eigen::MatrixXd surface)
-// {
-//     using namespace Eigen;
-// 
-//     MatrixXd R = MatrixXd::Zero(cz.rows(), cz.cols());
-//     for (int c = 0; c < cz.cols(); ++c)
-//     {
-//         for (int r = 0; r < cz.rows(); ++r)
-//         {
-//             if (cz(r, c) == std::numeric_limits<double>::max())
-//                 continue;
-// 
-//             int rr = std::floor(r/2);
-//             int cc = std::floor(c/2);
-//             R(r, c) = cz(r, c) - surface(rr, cc);
-//         }
-//     }
-// 
-//     return R;
-// }
-
-Eigen::MatrixXd SMRFilter::padMatrix(Eigen::MatrixXd data, int radius)
-{
-  using namespace Eigen;
-  
-  MatrixXd data2 = MatrixXd::Zero(data.rows()+2*radius, data.cols()+2*radius);
-  data2.block(radius, radius, data.rows(), data.cols()) = data;
-  data2.block(radius, 0, data.rows(), radius) =
-      data.block(0, 0, data.rows(), radius).rowwise().reverse();
-  data2.block(radius, data.cols()+radius, data.rows(), radius) =
-      data.block(0, data.cols()-radius, data.rows(), radius).rowwise().reverse();
-  data2.block(0, 0, radius, data2.cols()) =
-      data2.block(radius, 0, radius, data2.cols()).colwise().reverse();
-  data2.block(data.rows()+radius, 0, radius, data2.cols()) =
-      data2.block(data2.rows()-radius, 0, radius, data2.cols()).colwise().reverse();
-      
-  return data2;
-}
-
-Eigen::MatrixXd SMRFilter::matrixOpen(Eigen::MatrixXd data, int radius)
-{
-    using namespace Eigen;
-    
-    auto data2 = padMatrix(data, radius);
-
-    int nrows = data2.rows();
-    int ncols = data2.cols();
-
-    // first min, then max of min
-    MatrixXd minZ = MatrixXd::Constant(nrows, ncols,
-                                       std::numeric_limits<double>::max());
-    MatrixXd maxZ = MatrixXd::Constant(nrows, ncols,
-                                       std::numeric_limits<double>::lowest());
-    for (int c = 0; c < ncols; ++c)
-    {
-        for (int r = 0; r < nrows; ++r)
-        {
-            int cs = clamp(c-radius, 0, ncols-1);
-            int ce = clamp(c+radius, 0, ncols-1);
-            int rs = clamp(r-radius, 0, nrows-1);
-            int re = clamp(r+radius, 0, nrows-1);
-
-            for (int col = cs; col <= ce; ++col)
-            {
-                for (int row = rs; row <= re; ++row)
-                {
-                    if ((row-r)*(row-r)+(col-c)*(col-c) > radius*radius)
-                        continue;
-                    if (data2(row, col) < minZ(r, c))
-                        minZ(r, c) = data2(row, col);
-                }
-            }
-        }
-    }
-    // std::cerr << minZ << std::endl << std::endl;
-    for (int c = 0; c < ncols; ++c)
-    {
-        for (int r = 0; r < nrows; ++r)
-        {
-            int cs = clamp(c-radius, 0, ncols-1);
-            int ce = clamp(c+radius, 0, ncols-1);
-            int rs = clamp(r-radius, 0, nrows-1);
-            int re = clamp(r+radius, 0, nrows-1);
-
-            for (int col = cs; col <= ce; ++col)
-            {
-                for (int row = rs; row <= re; ++row)
-                {
-                    if ((row-r)*(row-r)+(col-c)*(col-c) > radius*radius)
-                        continue;
-                    if (minZ(row, col) > maxZ(r, c))
-                        maxZ(r, c) = minZ(row, col);
-                }
-            }
-        }
-    }
-
-    return maxZ.block(radius, radius, data.rows(), data.cols());
-}
-
-// Eigen::MatrixXd SMRFilter::matrixClose(Eigen::MatrixXd data, int radius)
-// {
-//     using namespace Eigen;
-//     
-//     auto data2 = padMatrix(data, radius);
-// 
-//     int nrows = data2.rows();
-//     int ncols = data2.cols();
-// 
-//     // first min, then max of min
-//     MatrixXd minZ = MatrixXd::Constant(nrows, ncols,
-//                                        std::numeric_limits<double>::max());
-//     MatrixXd maxZ = MatrixXd::Constant(nrows, ncols,
-//                                        std::numeric_limits<double>::lowest());
-//     for (int c = 0; c < ncols; ++c)
-//     {
-//         for (int r = 0; r < nrows; ++r)
-//         {
-//             int cs = clamp(c-radius, 0, ncols-1);
-//             int ce = clamp(c+radius, 0, ncols-1);
-//             int rs = clamp(r-radius, 0, nrows-1);
-//             int re = clamp(r+radius, 0, nrows-1);
-// 
-//             for (int col = cs; col <= ce; ++col)
-//             {
-//                 for (int row = rs; row <= re; ++row)
-//                 {
-//                     if ((row-r)*(row-r)+(col-c)*(col-c) > radius*radius)
-//                         continue;
-//                     if (data2(row, col) > maxZ(r, c))
-//                         maxZ(r, c) = data2(row, col);
-//                 }
-//             }
-//         }
-//     }
-//     for (int c = 0; c < ncols; ++c)
-//     {
-//         for (int r = 0; r < nrows; ++r)
-//         {
-//             int cs = clamp(c-radius, 0, ncols-1);
-//             int ce = clamp(c+radius, 0, ncols-1);
-//             int rs = clamp(r-radius, 0, nrows-1);
-//             int re = clamp(r+radius, 0, nrows-1);
-// 
-//             for (int col = cs; col <= ce; ++col)
-//             {
-//                 for (int row = rs; row <= re; ++row)
-//                 {
-//                     if ((row-r)*(row-r)+(col-c)*(col-c) > radius*radius)
-//                         continue;
-//                     if (maxZ(row, col) < minZ(r, c))
-//                         minZ(r, c) = maxZ(row, col);
-//                 }
-//             }
-//         }
-//     }
-// 
-//     return minZ.block(radius, radius, data.rows(), data.cols());
-// }
-// 
-// Eigen::MatrixXd SMRFilter::computeThresholds(Eigen::MatrixXd T, int radius)
-// {
-//     using namespace Eigen;
-// 
-//     MatrixXd t = MatrixXd::Zero(T.rows(), T.cols());
-//     for (int c = 0; c < T.cols(); ++c)
-//     {
-//         for (int r = 0; r < T.rows(); ++r)
-//         {
-//             double M1 = 0;
-//             double M2 = 0;
-//             int n = 0;
-// 
-//             int cs = clamp(c-radius, 0, T.cols()-1);
-//             int ce = clamp(c+radius, 0, T.cols()-1);
-//             int rs = clamp(r-radius, 0, T.rows()-1);
-//             int re = clamp(r+radius, 0, T.rows()-1);
-// 
-//             for (int col = cs; col <= ce; ++col)
-//             {
-//                 for (int row = rs; row <= re; ++row)
-//                 {
-//                     if ((row-r)*(row-r)+(col-c)*(col-c) > radius*radius)
-//                         continue;
-//                     int n1 = n;
-//                     n++;
-//                     double delta = T(row, col) - M1;
-//                     double delta_n = delta / n;
-//                     double term1 = delta * delta_n * n1;
-//                     M1 += delta_n;
-//                     M2 += term1;
-//                 }
-//             }
-//             t(r, c) = M1 + 3 * std::sqrt(M2/(n-1));
-//         }
-//     }
-// 
-//     return t;
-// }
-
-PointViewSet SMRFilter::run(PointViewPtr view)
-{
-    bool logOutput = log()->getLevel() > LogLevel::Debug1;
-    if (logOutput)
-        log()->floatPrecision(8);
-    log()->get(LogLevel::Debug2) << "Process SMRFilter...\n";
-
-    auto idx = processGround(view);
-
-    PointViewSet viewSet;
-
-    if (!idx.empty() && (m_classify || m_extract))
-    {
-
-        if (m_classify)
-        {
-            log()->get(LogLevel::Debug2) << "Labeled " << idx.size() << " ground returns!\n";
-
-            // set the classification label of ground returns as 2
-            // (corresponding to ASPRS LAS specification)
-            for (const auto& i : idx)
-            {
-                view->setField(Dimension::Id::Classification, i, 2);
-            }
-
-            viewSet.insert(view);
-        }
-
-        if (m_extract)
-        {
-            log()->get(LogLevel::Debug2) << "Extracted " << idx.size() << " ground returns!\n";
-
-            // create new PointView containing only ground returns
-            PointViewPtr output = view->makeNew();
-            for (const auto& i : idx)
-            {
-                output->appendPoint(*view, i);
-            }
-
-            viewSet.erase(view);
-            viewSet.insert(output);
-        }
-    }
-    else
-    {
-        if (idx.empty())
-            log()->get(LogLevel::Debug2) << "Filtered cloud has no ground returns!\n";
-
-        if (!(m_classify || m_extract))
-            log()->get(LogLevel::Debug2) << "Must choose --classify or --extract\n";
-
-        // return the view buffer unchanged
-        viewSet.insert(view);
-    }
-
-    return viewSet;
 }
 
 } // namespace pdal

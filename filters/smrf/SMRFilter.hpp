@@ -48,6 +48,8 @@ extern "C" PF_ExitFunc SMRFilter_InitPlugin();
 namespace pdal
 {
 
+using namespace Eigen;
+
 class PointLayout;
 class PointView;
 
@@ -64,6 +66,7 @@ public:
 private:
     bool m_classify;
     bool m_extract;
+    bool m_inpaint;
     int m_numRows;
     int m_numCols;
     int m_maxRow;
@@ -73,22 +76,19 @@ private:
     double m_threshold;
     BOX2D m_bounds;
 
-    virtual void addDimensions(PointLayoutPtr layout);
     virtual void addArgs(ProgramArgs& args);
+    virtual void addDimensions(PointLayoutPtr layout);
     int clamp(int t, int min, int max);
     int getColIndex(double x, double cell_size);
     int getRowIndex(double y, double cell_size);
-    Eigen::MatrixXd inpaint(Eigen::MatrixXd data);
-    Eigen::MatrixXd TPS(Eigen::MatrixXd cx, Eigen::MatrixXd cy,
-                        Eigen::MatrixXd cz);
-    void writeMatrix(Eigen::MatrixXd data, std::string filename,
-                     double cell_size, PointViewPtr view);
-    void writeControl(Eigen::MatrixXd cx, Eigen::MatrixXd cy,
-                      Eigen::MatrixXd cz, std::string filename);
-    Eigen::MatrixXd padMatrix(Eigen::MatrixXd data, int radius);
-    Eigen::MatrixXd matrixOpen(Eigen::MatrixXd data, int radius);
+    MatrixXd inpaint(MatrixXd data);
+    MatrixXd matrixOpen(MatrixXd data, int radius);
+    MatrixXd padMatrix(MatrixXd data, int radius);
     std::vector<PointId> processGround(PointViewPtr view);
     virtual PointViewSet run(PointViewPtr view);
+    MatrixXd TPS(MatrixXd cx, MatrixXd cy, MatrixXd cz);
+    void writeControl(MatrixXd cx, MatrixXd cy, MatrixXd cz, std::string filename);
+    void writeMatrix(MatrixXd data, std::string filename, double cell_size, PointViewPtr view);
 
     SMRFilter& operator=(const SMRFilter&); // not implemented
     SMRFilter(const SMRFilter&); // not implemented
