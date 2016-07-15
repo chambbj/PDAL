@@ -77,117 +77,123 @@ void RKDFilter::filter(PointView& view)
 {
     using namespace Eigen;
     using namespace Dimension;
-  
-    std::map<int, std::vector<PointId> > frameIdMap;
     
-    double frame_min = std::numeric_limits<double>::max();
-    double frame_max = std::numeric_limits<double>::lowest();
+    ////////
+    
+    // find the first sensor position and it's frame number
+    double sx, sy, sz, sf, ix, iy, iz;
     for (PointId i = 0; i < view.size(); ++i)
     {
-        double f = view.getFieldAs<double>(m_frameNumber, i);
-        if (f < frame_min)
-            frame_min = f;
-        if (f > frame_max)
-            frame_max = f;
-            
-        std::vector<PointId> ids = frameIdMap[f];
-        ids.push_back(i);
-        frameIdMap[f] = ids;
+        if (view.getFieldAs<double>(m_pixelNumber, i) == -5)
+        {
+            sx = view.getFieldAs<double>(Id::X, i);
+            sy = view.getFieldAs<double>(Id::Y, i);
+            sz = view.getFieldAs<double>(Id::Z, i);
+            sf = view.getFieldAs<double>(m_frameNumber, i);
+            break;
+        }
     }
-    log()->get(LogLevel::Debug) << "Min frame = " << frame_min << std::endl;
-    log()->get(LogLevel::Debug) << "Max frame = " << frame_max << std::endl;
-
-    for (double f = frame_min; f < frame_max; ++f)
-    {
-        // log()->get(LogLevel::Debug) << "Processing frame " << f << std::endl;
     
-        double sx, sy, sz;
-        std::vector<PointId> ids = frameIdMap[f];
+    for (PointId i = 0; i < view.size(); ++i)
+    {
+        double p = view.getFieldAs<double>(m_pixelNumber, i);
+        double f = view.getFieldAs<double>(m_frameNumber, i);
+        if (p >= 0 && f == sf)
+        {
+            ix = view.getFieldAs<double>(Id::X, i);
+            iy = view.getFieldAs<double>(Id::Y, i);
+            iz = view.getFieldAs<double>(Id::Z, i);
+            break;
+        }
+    }
+    
+    Vector3d los;
+    los << (sx-ix), (sy-iy), (sz-iz);
+    std::cerr << los << std::endl;
+    los.normalize();
+    std::cerr << los << std::endl;
+    Vector3d up;
+    up << 0, 0, 1;
+    auto R = Quaterniond().setFromTwoVectors(los, up).toRotationMatrix();
+    std::cerr << R << std::endl;
+    return;
+    
+    ////////
+  
         std::vector<PointId> newIds;
         
-        for (auto const& i : ids)
+        for (PointId i = 0; i < view.size(); ++i)
         {
             // get the sensor position (PixelNumber == -5) for this frame
             double p = view.getFieldAs<double>(m_pixelNumber, i);
-            if (p == -5)
-            {
-                // record the sensor position
-                sx = view.getFieldAs<double>(Id::X, i);
-                sy = view.getFieldAs<double>(Id::Y, i);
-                sz = view.getFieldAs<double>(Id::Z, i);
-                // log()->get(LogLevel::Debug) << "Found sensor at " << sx << "\t" << sy << "\t" << sz << std::endl;;
-                continue;
-            }
-                
             if (p < 0)
                 continue;
                 
             newIds.push_back(i);
         }
-        // log()->get(LogLevel::Debug) << "Frame has " << newIds.size() << " points\n";
         
-        if (newIds.size() == 0)
-            continue;
-            
+        assert(newIds.size());
+          
         VectorXd range(newIds.size());
         range.setZero();
         
         for (size_t i = 0; i < newIds.size(); ++i)
         {
-            double x = view.getFieldAs<double>(Id::X, newIds[i]);
-            double y = view.getFieldAs<double>(Id::Y, newIds[i]);
             double z = view.getFieldAs<double>(Id::Z, newIds[i]);
-            
-            range(i) = std::sqrt((x-sx)*(x-sx)+(y-sy)*(y-sy)+(z-sz)*(z-sz));
-            
+            range(i) = z;
         }
         
         VectorXd density(newIds.size());
         density.setZero();
-        std::multiset<double> sorted_density;
         
         // compute range density for the frame
         for (size_t i = 0; i < newIds.size(); ++i)
         {
+            double bw = 0.15;
+            
             // create a copy of the vector with current range removed
             VectorXd subset = range;
-            subset.segment(i, range.size()-i-1) = subset.segment(i+1, range.size()-i-1);
-            subset.conservativeResize(range.size()-1);
+            int N = range.size()-1;
+            subset.segment(i, N-i) = subset.segment(i+1, N-i);
+            subset.conservativeResize(N);
             
-            subset = subset - VectorXd::Constant(range.size()-1, range(i));
-            subset /= 0.5;
+            subset = subset - VectorXd::Constant(N, range(i));
+            // log()->get(LogLevel::Debug) << subset.transpose() << std::endl;
+            subset /= bw;
             subset = subset.cwiseProduct(subset);
             subset *= -0.5;
             subset = subset.array().exp().matrix();  // legit?
             subset /= std::sqrt(2*3.14159);
-            density(i) = subset.sum() / (subset.size()*0.5);
-            sorted_density.insert(density(i));
+            density(i) = subset.sum() / (subset.size()*bw);
         }
         
         // log()->get(LogLevel::Debug) << density.transpose() << std::endl;
-        // density.normalize();
+        density.normalize();
         // log()->get(LogLevel::Debug) << density.transpose() << std::endl;
         
-        int thresh_id = static_cast<int>(std::ceil(0.9 * density.size()));
-        double thresh;
-        int j = 0;
-        for (auto it = sorted_density.begin(); it != sorted_density.end(); ++it)
-        {
-            if (j++ < thresh_id)
-                continue;
-            thresh = *it;
-            break;
-        }
-        log()->get(LogLevel::Debug) << thresh << std::endl;
+        // int thresh_id = static_cast<int>(std::ceil(0.9 * density.size()));
+        // double thresh;
+        // int j = 0;
+        // for (auto it = sorted_density.begin(); it != sorted_density.end(); ++it)
+        // {
+        //     if (j++ < thresh_id)
+        //         continue;
+        //     thresh = *it;
+        //     break;
+        // }
+        // log()->get(LogLevel::Debug) << thresh << std::endl;
           
         for (size_t i = 0; i < density.size(); ++i)
         {
-            if (density(i) > thresh)
-                view.setField(m_rangeDensity, newIds[i], 1.0);
-            else
-                view.setField(m_rangeDensity, newIds[i], 0.0);
+            log()->get(LogLevel::Debug) << density(i) << std::endl;
+            // if (density(i) > thresh)
+            if (std::isnan(density(i)) || std::isinf(density(i)))
+                continue;
+                // view.setField(m_rangeDensity, newIds[i], 0.0);
+            view.setField(m_rangeDensity, newIds[i], density(i));
+            // else
+            //     view.setField(m_rangeDensity, newIds[i], 0.0);
         }
-    }
 }
 
 
