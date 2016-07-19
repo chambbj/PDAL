@@ -59,81 +59,14 @@ std::string RKDFilter::getName() const
 void RKDFilter::addDimensions(PointLayoutPtr layout)
 {
     using namespace Dimension;
-    m_rangeDensity = layout->registerOrAssignDim("RangeDensity", Type::Double);
-    m_frameNumber = layout->registerOrAssignDim("Frame Number", Type::Double);
-    m_pixelNumber = layout->registerOrAssignDim("Pixel Number", Type::Double);
+    m_rangeDensity = layout->registerOrAssignDim("Density", Type::Double);
 }
-
-// void RKDFilter::prepared(PointTableRef table)
-// {
-    // const PointLayoutPtr layout(table.layout());
-    // if (!layout->hasDim(Dimension::Id::FrameNumber))
-        // throw pdal_error("RKDFilter: missing FrameNumber dimension in input PointView");
-    // if (!layout->hasDim(Dimension::Id::PixelNumber))
-        // throw pdal_error("RKDFilter: missing PixelNumber dimension in input PointView");
-// }
 
 void RKDFilter::filter(PointView& view)
 {
     using namespace Eigen;
     using namespace Dimension;
     
-    ////////
-    
-    // find the first sensor position and it's frame number
-    double sx, sy, sz, sf, ix, iy, iz;
-    for (PointId i = 0; i < view.size(); ++i)
-    {
-        if (view.getFieldAs<double>(m_pixelNumber, i) == -5)
-        {
-            sx = view.getFieldAs<double>(Id::X, i);
-            sy = view.getFieldAs<double>(Id::Y, i);
-            sz = view.getFieldAs<double>(Id::Z, i);
-            sf = view.getFieldAs<double>(m_frameNumber, i);
-            break;
-        }
-    }
-    
-    for (PointId i = 0; i < view.size(); ++i)
-    {
-        double p = view.getFieldAs<double>(m_pixelNumber, i);
-        double f = view.getFieldAs<double>(m_frameNumber, i);
-        if (p >= 0 && f == sf)
-        {
-            ix = view.getFieldAs<double>(Id::X, i);
-            iy = view.getFieldAs<double>(Id::Y, i);
-            iz = view.getFieldAs<double>(Id::Z, i);
-            break;
-        }
-    }
-    
-    Vector3d los;
-    los << (sx-ix), (sy-iy), (sz-iz);
-    std::cerr << los << std::endl;
-    los.normalize();
-    std::cerr << los << std::endl;
-    Vector3d up;
-    up << 0, 0, 1;
-    auto R = Quaterniond().setFromTwoVectors(los, up).toRotationMatrix();
-    std::cerr << R << std::endl;
-    return;
-    
-    ////////
-  
-        std::vector<PointId> newIds;
-        
-        for (PointId i = 0; i < view.size(); ++i)
-        {
-            // get the sensor position (PixelNumber == -5) for this frame
-            double p = view.getFieldAs<double>(m_pixelNumber, i);
-            if (p < 0)
-                continue;
-                
-            newIds.push_back(i);
-        }
-        
-        assert(newIds.size());
-          
         VectorXd range(newIds.size());
         range.setZero();
         
@@ -167,22 +100,8 @@ void RKDFilter::filter(PointView& view)
             density(i) = subset.sum() / (subset.size()*bw);
         }
         
-        // log()->get(LogLevel::Debug) << density.transpose() << std::endl;
-        density.normalize();
-        // log()->get(LogLevel::Debug) << density.transpose() << std::endl;
+      density /= density.sum();
         
-        // int thresh_id = static_cast<int>(std::ceil(0.9 * density.size()));
-        // double thresh;
-        // int j = 0;
-        // for (auto it = sorted_density.begin(); it != sorted_density.end(); ++it)
-        // {
-        //     if (j++ < thresh_id)
-        //         continue;
-        //     thresh = *it;
-        //     break;
-        // }
-        // log()->get(LogLevel::Debug) << thresh << std::endl;
-          
         for (size_t i = 0; i < density.size(); ++i)
         {
             log()->get(LogLevel::Debug) << density(i) << std::endl;
