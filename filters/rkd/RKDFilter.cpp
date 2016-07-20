@@ -39,6 +39,7 @@
 
 #include <Eigen/Dense>
 
+#include <random>
 #include <string>
 #include <vector>
 
@@ -56,64 +57,175 @@ std::string RKDFilter::getName() const
     return s_info.name;
 }
 
+void RKDFilter::addArgs(ProgramArgs& args)
+{
+    args.add("nsamps", "Number of samples", m_nSamples, 256);
+    args.add("bw", "Bandwidth", m_bw, 0.15);
+}
+
 void RKDFilter::addDimensions(PointLayoutPtr layout)
 {
     using namespace Dimension;
     m_rangeDensity = layout->registerOrAssignDim("Density", Type::Double);
 }
 
-void RKDFilter::filter(PointView& view)
+PointViewSet RKDFilter::run(PointViewPtr view)
 {
     using namespace Eigen;
     using namespace Dimension;
     
-        VectorXd range(newIds.size());
-        range.setZero();
+    PointViewSet viewSet;
+    
+    // compute bounds for zmin, zmax
+    BOX3D bounds;
+    view->calculateBounds(bounds);
+    
+    double x = (bounds.maxx - bounds.minx) / 2 + bounds.minx;
+    double y = (bounds.maxy - bounds.miny) / 2 + bounds.miny;
+    
+    // sampled uniformly between zmin and zmax;
+    m_samples.resize(m_nSamples);
+    // std::random_device rd;
+    // std::mt19937 gen(rd());
+    // std::uniform_real_distribution<> dis(bounds.minz, bounds.maxz);
+    double spacing = (bounds.maxz - bounds.minz) / m_nSamples;
+    for (int n = 0; n < m_nSamples; ++n)
+        m_samples(n) = bounds.minz + n*spacing;
+        // m_samples(n) = dis(gen);
+    // log()->get(LogLevel::Debug) << "initialize() should only be called once\n";
+    // log()->get(LogLevel::Debug) << m_samples.transpose() << std::endl;
+    
+    // log()->get(LogLevel::Debug) << "Processing view with " << view->size() << " points\n";
+    m_measurements.resize(view->size());
+  
+    PointRef point(*view, 0);
+    for (PointId idx = 0; idx < view->size(); ++idx)
+    {
+        point.setPointId(idx);
+        m_measurements(idx) = point.getFieldAs<double>(Dimension::Id::Z);
+    }
+    
+    // log()->get(LogLevel::Debug) << "Found " << numGood << " measurements\n";
+    // m_measurements.conservativeResize(numGood);
+    
+    // log()->get(LogLevel::Debug) << "Initial samples\n";
+    // log()->get(LogLevel::Debug) << m_samples.transpose() << std::endl;
+    
+    // log()->get(LogLevel::Debug) << "measurements\n";
+    // log()->get(LogLevel::Debug) << m_measurements.transpose() << std::endl;
+    
+    VectorXd density(m_nSamples);
+    density.setZero();
+    
+    // compute range density for the frame
+    for (size_t i = 0; i < m_nSamples; ++i)
+    {
+        // create a copy of the vector with current range removed
+        VectorXd subset = m_measurements;
+        int N = m_measurements.size();
         
-        for (size_t i = 0; i < newIds.size(); ++i)
+        subset = subset - VectorXd::Constant(N, m_samples(i));
+        subset /= m_bw;
+        subset = subset.cwiseProduct(subset);
+        subset *= -0.5;
+        subset = subset.array().exp().matrix();  // legit?
+        subset /= std::sqrt(2*3.14159);
+        density(i) = subset.sum() / (subset.size()*m_bw);
+    }
+    density /= density.maxCoeff();
+    
+    // log()->get(LogLevel::Debug) << "densities\n";
+    // log()->get(LogLevel::Debug) << density << std::endl;
+    
+    VectorXd diff(m_nSamples-1);
+    for (int i = 1; i < m_nSamples; ++i)
+        diff(i-1) = density(i) - density(i-1);
+    
+    VectorXd sign(m_nSamples-1);
+    for (int i = 0; i < m_nSamples-1; ++i)
+    {
+        if (diff(i) < 0)
+            sign(i) = -1;
+        else if (diff(i) > 0)
+            sign(i) = 1;
+        else
+            sign(i) = 0;
+    }
+    
+    VectorXd diff2(m_nSamples-2);
+    for (int i = 1; i < m_nSamples-1; ++i)
+        diff2(i-1) = sign(i) - sign(i-1);
+    
+    VectorXd vals(m_nSamples-2);
+    vals.setZero();
+    VectorXd newSamples(m_nSamples-2);
+    newSamples.setZero();
+    int nPeaks = 0;    
+    for (int i = 0; i < m_nSamples-2; ++i)
+    {
+        if (diff2(i) == -2)
         {
-            double z = view.getFieldAs<double>(Id::Z, newIds[i]);
-            range(i) = z;
+            vals(nPeaks) = density(i);
+            newSamples(nPeaks++) = m_samples(i);
         }
-        
-        VectorXd density(newIds.size());
-        density.setZero();
-        
-        // compute range density for the frame
-        for (size_t i = 0; i < newIds.size(); ++i)
+    }
+    
+    if (nPeaks == 0)
+        return viewSet;
+    
+    vals.conservativeResize(nPeaks);
+    vals /= vals.maxCoeff();
+    double minval = vals.minCoeff();
+    newSamples.conservativeResize(nPeaks);
+    // log()->get(LogLevel::Debug) << vals.minCoeff() << "\t" << vals.maxCoeff() << "\t" << nPeaks << std::endl;
+    
+    PointViewPtr output = view->makeNew();
+    PointId idx = 0;
+    for (int i = 0; i < nPeaks; ++i)
+    {
+        // create a point at x, y, m_samples(i)
+        // if (diff2(i) == -2)
+        if (vals(i) == 1.0)
         {
-            double bw = 0.15;
+            // log()->get(LogLevel::Debug) << m_samples(i) << "\t" << density(i) << "\t" << diff(i) << "\t" << sign(i) << "\t" << diff2(i) << std::endl;
             
-            // create a copy of the vector with current range removed
-            VectorXd subset = range;
-            int N = range.size()-1;
-            subset.segment(i, N-i) = subset.segment(i+1, N-i);
-            subset.conservativeResize(N);
-            
-            subset = subset - VectorXd::Constant(N, range(i));
-            // log()->get(LogLevel::Debug) << subset.transpose() << std::endl;
-            subset /= bw;
-            subset = subset.cwiseProduct(subset);
-            subset *= -0.5;
-            subset = subset.array().exp().matrix();  // legit?
-            subset /= std::sqrt(2*3.14159);
-            density(i) = subset.sum() / (subset.size()*bw);
+            // output->appendPoint(*view, i);
+            std::random_device rd;
+            std::mt19937 gen(rd());
+            std::uniform_real_distribution<> disx(bounds.minx, bounds.maxx);
+            std::uniform_real_distribution<> disy(bounds.miny, bounds.maxy);
+            output->setField(Dimension::Id::X, idx, x /*disx(gen)*/);
+            output->setField(Dimension::Id::Y, idx, y /*disy(gen)*/);
+            output->setField(Dimension::Id::Z, idx, newSamples(i));
+            output->setField(m_rangeDensity, idx, vals(i));
+            idx++;
         }
-        
-      density /= density.sum();
-        
-        for (size_t i = 0; i < density.size(); ++i)
-        {
-            log()->get(LogLevel::Debug) << density(i) << std::endl;
-            // if (density(i) > thresh)
-            if (std::isnan(density(i)) || std::isinf(density(i)))
-                continue;
-                // view.setField(m_rangeDensity, newIds[i], 0.0);
-            view.setField(m_rangeDensity, newIds[i], density(i));
-            // else
-            //     view.setField(m_rangeDensity, newIds[i], 0.0);
-        }
+    }
+    
+    viewSet.erase(view);
+    viewSet.insert(output);
+    
+    // for (size_t i = 0; i < density.size(); ++i)
+    // {
+    //     log()->get(LogLevel::Debug) << density(i) << std::endl;
+    //     // if (density(i) > thresh)
+    //     if (std::isnan(density(i)) || std::isinf(density(i)))
+    //         continue;
+    //         // view.setField(m_rangeDensity, newIds[i], 0.0);
+    //     view.setField(m_rangeDensity, newIds[i], density(i));
+    //     // else
+    //     //     view.setField(m_rangeDensity, newIds[i], 0.0);
+    // }
+    // 
+    // if (std::isnan(density.sum()))
+    //     return viewSet;
+    
+    // log()->get(LogLevel::Debug) << "Weights\n";
+    // log()->get(LogLevel::Debug) << density.transpose() << std::endl;
+    // log()->get(LogLevel::Debug) << "Checksum " << density.sum() << std::endl;
+    
+    // viewSet.insert(m_view);
+    return viewSet;
 }
-
 
 } // namespace pdal
