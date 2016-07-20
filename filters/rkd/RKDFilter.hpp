@@ -37,6 +37,8 @@
 #include <pdal/Filter.hpp>
 #include <pdal/plugin.hpp>
 
+#include <Eigen/Dense>
+
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -62,11 +64,14 @@ public:
     std::string getName() const;
 
 private:
-    Dimension::Id m_rangeDensity, m_frameNumber, m_pixelNumber;
+    Dimension::Id m_rangeDensity;
+    int m_nSamples;
+    double m_bw;
+    Eigen::VectorXd m_samples, m_measurements;
 
+    virtual void addArgs(ProgramArgs& args);
     virtual void addDimensions(PointLayoutPtr layout);
-    // virtual void prepared(PointTableRef table);
-    virtual void filter(PointView& view);
+    virtual PointViewSet run(PointViewPtr in);
 
     RKDFilter& operator=(const RKDFilter&); // not implemented
     RKDFilter(const RKDFilter&); // not implemented
