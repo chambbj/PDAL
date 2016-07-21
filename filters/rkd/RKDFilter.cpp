@@ -39,7 +39,6 @@
 
 #include <Eigen/Dense>
 
-#include <random>
 #include <string>
 #include <vector>
 
@@ -59,8 +58,10 @@ std::string RKDFilter::getName() const
 
 void RKDFilter::addArgs(ProgramArgs& args)
 {
-    args.add("nsamps", "Number of samples", m_nSamples, 256);
-    args.add("bw", "Bandwidth", m_bw, 0.15);
+    args.add("bw", "Bandwidth", m_bw, 0.6);
+    args.add("hres", "Horizontal resolution", m_hres, 0.05);
+    args.add("vres", "Vertical resolution", m_vres, 0.05);
+    args.add("radius", "Radius", m_radius, 0.15);
 }
 
 void RKDFilter::addDimensions(PointLayoutPtr layout)
@@ -74,157 +75,147 @@ PointViewSet RKDFilter::run(PointViewPtr view)
     using namespace Eigen;
     using namespace Dimension;
     
+    typedef std::vector<PointId> PointIdVec;
+
+    // The 2D index is used to find neighbors in a Z column.    
+    KD2Index kd2(*view);
+    kd2.build();
+    
+    // The 3D index is used to find the nearest neighbor.
+    KD3Index kd3(*view);
+    kd3.build();
+    
     PointViewSet viewSet;
     
-    // compute bounds for zmin, zmax
+    // Create the output PointView.
+    PointViewPtr output = view->makeNew();
+    
+    // Compute bounds to derive number of rows, cols, and samples.
     BOX3D bounds;
     view->calculateBounds(bounds);
-    
-    double x = (bounds.maxx - bounds.minx) / 2 + bounds.minx;
-    double y = (bounds.maxy - bounds.miny) / 2 + bounds.miny;
-    
-    // sampled uniformly between zmin and zmax;
-    m_samples.resize(m_nSamples);
-    // std::random_device rd;
-    // std::mt19937 gen(rd());
-    // std::uniform_real_distribution<> dis(bounds.minz, bounds.maxz);
-    double spacing = (bounds.maxz - bounds.minz) / m_nSamples;
-    for (int n = 0; n < m_nSamples; ++n)
-        m_samples(n) = bounds.minz + n*spacing;
-        // m_samples(n) = dis(gen);
-    // log()->get(LogLevel::Debug) << "initialize() should only be called once\n";
-    // log()->get(LogLevel::Debug) << m_samples.transpose() << std::endl;
-    
-    // log()->get(LogLevel::Debug) << "Processing view with " << view->size() << " points\n";
-    m_measurements.resize(view->size());
+    double extentx = bounds.maxx - bounds.minx;
+    double extenty = bounds.maxy - bounds.miny;
+    double extentz = bounds.maxz - bounds.minz;
+    int cols = static_cast<int>(std::ceil(extentx / m_hres));
+    int rows = static_cast<int>(std::ceil(extenty / m_hres));
+    int n = static_cast<int>(std::ceil(extentz / m_vres));
+    log()->get(LogLevel::Debug) << "# samples = " << n << std::endl;
+    log()->get(LogLevel::Debug) << "# rows = " << rows << std::endl;
+    log()->get(LogLevel::Debug) << "# cols = " << cols << std::endl;
   
-    PointRef point(*view, 0);
-    for (PointId idx = 0; idx < view->size(); ++idx)
+    // Initialize the samples.
+    VectorXd samples(n);
+    for (int i = 0; i < samples.size(); ++i)
+        samples(i) = bounds.minz + i * m_vres;
+    
+    for (int r = 0; r < rows; ++r)
     {
-        point.setPointId(idx);
-        m_measurements(idx) = point.getFieldAs<double>(Dimension::Id::Z);
-    }
-    
-    // log()->get(LogLevel::Debug) << "Found " << numGood << " measurements\n";
-    // m_measurements.conservativeResize(numGood);
-    
-    // log()->get(LogLevel::Debug) << "Initial samples\n";
-    // log()->get(LogLevel::Debug) << m_samples.transpose() << std::endl;
-    
-    // log()->get(LogLevel::Debug) << "measurements\n";
-    // log()->get(LogLevel::Debug) << m_measurements.transpose() << std::endl;
-    
-    VectorXd density(m_nSamples);
-    density.setZero();
-    
-    // compute range density for the frame
-    for (size_t i = 0; i < m_nSamples; ++i)
-    {
-        // create a copy of the vector with current range removed
-        VectorXd subset = m_measurements;
-        int N = m_measurements.size();
-        
-        subset = subset - VectorXd::Constant(N, m_samples(i));
-        subset /= m_bw;
-        subset = subset.cwiseProduct(subset);
-        subset *= -0.5;
-        subset = subset.array().exp().matrix();  // legit?
-        subset /= std::sqrt(2*3.14159);
-        density(i) = subset.sum() / (subset.size()*m_bw);
-    }
-    density /= density.maxCoeff();
-    
-    // log()->get(LogLevel::Debug) << "densities\n";
-    // log()->get(LogLevel::Debug) << density << std::endl;
-    
-    VectorXd diff(m_nSamples-1);
-    for (int i = 1; i < m_nSamples; ++i)
-        diff(i-1) = density(i) - density(i-1);
-    
-    VectorXd sign(m_nSamples-1);
-    for (int i = 0; i < m_nSamples-1; ++i)
-    {
-        if (diff(i) < 0)
-            sign(i) = -1;
-        else if (diff(i) > 0)
-            sign(i) = 1;
-        else
-            sign(i) = 0;
-    }
-    
-    VectorXd diff2(m_nSamples-2);
-    for (int i = 1; i < m_nSamples-1; ++i)
-        diff2(i-1) = sign(i) - sign(i-1);
-    
-    VectorXd vals(m_nSamples-2);
-    vals.setZero();
-    VectorXd newSamples(m_nSamples-2);
-    newSamples.setZero();
-    int nPeaks = 0;    
-    for (int i = 0; i < m_nSamples-2; ++i)
-    {
-        if (diff2(i) == -2)
+        double y = bounds.miny + r * m_hres;
+        for (int c = 0; c < cols; ++c)
         {
-            vals(nPeaks) = density(i);
-            newSamples(nPeaks++) = m_samples(i);
-        }
-    }
-    
-    if (nPeaks == 0)
-        return viewSet;
-    
-    vals.conservativeResize(nPeaks);
-    vals /= vals.maxCoeff();
-    double minval = vals.minCoeff();
-    newSamples.conservativeResize(nPeaks);
-    // log()->get(LogLevel::Debug) << vals.minCoeff() << "\t" << vals.maxCoeff() << "\t" << nPeaks << std::endl;
-    
-    PointViewPtr output = view->makeNew();
-    PointId idx = 0;
-    for (int i = 0; i < nPeaks; ++i)
-    {
-        // create a point at x, y, m_samples(i)
-        // if (diff2(i) == -2)
-        if (vals(i) == 1.0)
-        {
-            // log()->get(LogLevel::Debug) << m_samples(i) << "\t" << density(i) << "\t" << diff(i) << "\t" << sign(i) << "\t" << diff2(i) << std::endl;
+            double x = bounds.minx + c * m_hres;
             
-            // output->appendPoint(*view, i);
-            std::random_device rd;
-            std::mt19937 gen(rd());
-            std::uniform_real_distribution<> disx(bounds.minx, bounds.maxx);
-            std::uniform_real_distribution<> disy(bounds.miny, bounds.maxy);
-            output->setField(Dimension::Id::X, idx, x /*disx(gen)*/);
-            output->setField(Dimension::Id::Y, idx, y /*disy(gen)*/);
-            output->setField(Dimension::Id::Z, idx, newSamples(i));
-            output->setField(m_rangeDensity, idx, vals(i));
-            idx++;
+            // Find neighbors in raw cloud at current XY cell.
+            PointIdVec neighbors = kd2.radius(x, y, m_radius);
+            
+            // Record Z values from each of the neighbors.
+            VectorXd z_vals(neighbors.size());
+            for (PointId idx = 0; idx < neighbors.size(); ++idx)
+                z_vals(idx) = view->getFieldAs<double>(Id::Z, neighbors[idx]);
+            // std::cerr << z_vals.transpose() << std::endl;
+            
+            // Sample density for the current column.
+            VectorXd density = VectorXd::Zero(samples.size());
+            for (size_t i = 0; i < samples.size(); ++i)
+            {
+                VectorXd temp = z_vals;
+                temp = temp - VectorXd::Constant(temp.size(), samples(i));
+                temp /= m_bw;
+                temp = temp.cwiseProduct(temp);
+                temp *= -0.5;
+                temp = temp.array().exp().matrix();
+                temp /= std::sqrt(2*3.14159);
+                density(i) = temp.sum() / (temp.size()*m_bw);
+            }
+            density /= density.maxCoeff();
+            // std::cerr << density.transpose() << std::endl;
+            
+            // MATLAB diff command - approximate derivative
+            VectorXd diff(samples.size()-1);
+            for (int i = 1; i < samples.size(); ++i)
+                diff(i-1) = density(i) - density(i-1);
+            
+            // MATLAB sign command - sigmoid function
+            VectorXd sign(samples.size()-1);
+            for (int i = 0; i < samples.size()-1; ++i)
+            {
+                if (diff(i) < 0)
+                    sign(i) = -1;
+                else if (diff(i) > 0)
+                    sign(i) = 1;
+                else
+                    sign(i) = 0;
+            }
+            
+            // MATLAB diff command again - approxiate derivative
+            VectorXd diff2(samples.size()-2);
+            for (int i = 1; i < samples.size()-1; ++i)
+                diff2(i-1) = sign(i) - sign(i-1);
+            
+            // Peaks occur at diff2 == -2
+            VectorXd vals = VectorXd::Zero(samples.size()-2);
+            VectorXd peaks = VectorXd::Zero(samples.size()-2);
+            int nPeaks = 0;
+            // std::cerr << diff2.transpose() << std::endl;
+            for (int i = 0; i < samples.size()-2; ++i)
+            {
+                if (diff2(i) == -2)
+                {
+                    vals(nPeaks) = density(i);
+                    peaks(nPeaks++) = samples(i);
+                }
+            }
+            
+            // printf("npeaks %d\n", nPeaks);
+            
+            if (nPeaks == 0)
+                continue;
+            
+            vals.conservativeResize(nPeaks);
+            peaks.conservativeResize(nPeaks);
+            
+            vals /= vals.maxCoeff();
+            
+            // Make a copy of the vals, to sort in place, and determine a threshold.
+            // auto valcopy = vals;
+            // std::sort(valcopy.data(), valcopy.data()+valcopy.size(),std::greater<double>());
+            
+            // Struggling with a good way to set a threshold. Highest peak is
+            // pretty good. More would be better. Where do we stop?
+            // double thresh;
+            // if (nPeaks > 1)
+            //     thresh = valcopy(1);
+            // else
+            //     thresh = valcopy(0);
+            
+            // For each peak of sufficient size/strength, find the nearest
+            // neighbor in the raw data and append to the output view.
+            for (int i = 0; i < nPeaks; ++i)
+            {
+              // printf("%0.2f\n", vals(i));
+                // if (vals(i) > thresh)
+                if (vals(i) == 1.0)
+                {
+                  // printf("Peak %d of %d at %0.2f (%0.2f > %0.2f)\n", i, nPeaks, peaks(i), vals(i), thresh);
+                    PointIdVec idx = kd3.neighbors(x, y, peaks(i), 1);
+                    output->appendPoint(*view, idx[0]);
+                }
+            }
         }
     }
     
     viewSet.erase(view);
     viewSet.insert(output);
-    
-    // for (size_t i = 0; i < density.size(); ++i)
-    // {
-    //     log()->get(LogLevel::Debug) << density(i) << std::endl;
-    //     // if (density(i) > thresh)
-    //     if (std::isnan(density(i)) || std::isinf(density(i)))
-    //         continue;
-    //         // view.setField(m_rangeDensity, newIds[i], 0.0);
-    //     view.setField(m_rangeDensity, newIds[i], density(i));
-    //     // else
-    //     //     view.setField(m_rangeDensity, newIds[i], 0.0);
-    // }
-    // 
-    // if (std::isnan(density.sum()))
-    //     return viewSet;
-    
-    // log()->get(LogLevel::Debug) << "Weights\n";
-    // log()->get(LogLevel::Debug) << density.transpose() << std::endl;
-    // log()->get(LogLevel::Debug) << "Checksum " << density.sum() << std::endl;
-    
-    // viewSet.insert(m_view);
     return viewSet;
 }
 
