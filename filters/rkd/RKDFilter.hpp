@@ -37,8 +37,6 @@
 #include <pdal/Filter.hpp>
 #include <pdal/plugin.hpp>
 
-#include <Eigen/Dense>
-
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -65,9 +63,7 @@ public:
 
 private:
     Dimension::Id m_rangeDensity;
-    int m_nSamples;
-    double m_bw;
-    Eigen::VectorXd m_samples, m_measurements;
+    double m_bw, m_hres, m_vres, m_radius;
 
     virtual void addArgs(ProgramArgs& args);
     virtual void addDimensions(PointLayoutPtr layout);
