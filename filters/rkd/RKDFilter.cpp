@@ -68,6 +68,10 @@ void RKDFilter::addDimensions(PointLayoutPtr layout)
 {
     using namespace Dimension;
     m_rangeDensity = layout->registerOrAssignDim("Density", Type::Double);
+    layout->registerDim(Id::Intensity);
+    layout->registerDim(Id::Reflectance);
+    layout->registerDim(Id::ReturnNumber);
+    layout->registerDim(Id::NumberOfReturns);
 }
 
 PointViewSet RKDFilter::run(PointViewPtr view)
@@ -201,13 +205,34 @@ PointViewSet RKDFilter::run(PointViewPtr view)
             // Peaks occur at diff2 == -2
             VectorXd vals = VectorXd::Zero(samples.size()-2);
             VectorXd peaks = VectorXd::Zero(samples.size()-2);
+            VectorXd area = VectorXd::Zero(samples.size()-2);
+            VectorXd areaFrac = VectorXd::Zero(samples.size()-2);
             int nPeaks = 0;
             for (int i = 0; i < samples.size()-2; ++i)
             {
                 if (diff2(i) == -2 && MAPCPNeighbors(i) > 2)
                 {
                     vals(nPeaks) = density(i);
-                    peaks(nPeaks++) = samples(i);
+                    peaks(nPeaks) = samples(i);
+                  
+                    double peakArea = density(i);  
+                    for (int j = i+1; j < samples.size()-2; ++j)
+                    {
+                        if (diff2(j) > 0)
+                            break;
+                        peakArea += density(j);
+                    }
+                    for (int j = i-1; j >= 0; --j)
+                    {
+                        if (diff2(j) > 0)
+                            break;
+                        peakArea += density(j);
+                    }
+                    
+                    area(nPeaks) = peakArea;
+                    areaFrac(nPeaks) = peakArea / density.sum();
+                    
+                    nPeaks++;
                 }
             }
             
@@ -216,6 +241,8 @@ PointViewSet RKDFilter::run(PointViewPtr view)
             
             vals.conservativeResize(nPeaks);
             peaks.conservativeResize(nPeaks);
+            area.conservativeResize(nPeaks);
+            areaFrac.conservativeResize(nPeaks);
             
             vals /= vals.sum();
             
@@ -242,6 +269,10 @@ PointViewSet RKDFilter::run(PointViewPtr view)
                   // printf("Peak %d of %d at %0.2f (%0.2f > %0.2f)\n", i, nPeaks, peaks(i), vals(i), thresh);
                     PointIdVec idx = kd3.neighbors(x, y, peaks(i), 1);
                     view->setField(m_rangeDensity, idx[0], vals(i));
+                    view->setField(Id::NumberOfReturns, idx[0], nPeaks);
+                    view->setField(Id::ReturnNumber, idx[0], i+1);
+                    view->setField(Id::Intensity, idx[0], area(i));
+                    view->setField(Id::Reflectance, idx[0], areaFrac(i));
                     output->appendPoint(*view, idx[0]);
                 // }
             }
