@@ -107,13 +107,45 @@ PointViewSet RKDFilter::run(PointViewPtr view)
     VectorXd samples(n);
     for (int i = 0; i < samples.size(); ++i)
         samples(i) = bounds.minz + i * m_vres;
-    
+            
     for (int r = 0; r < rows; ++r)
     {
         double y = bounds.miny + r * m_hres;
         for (int c = 0; c < cols; ++c)
         {
             double x = bounds.minx + c * m_hres;
+        
+            VectorXd MAPCPNeighbors = VectorXd::Zero(samples.size());
+            // VectorXd MAPCPImmediateNeighbors = VectorXd::Zero(samples.size());
+            // VectorXd MAPCPGaussianWeights = VectorXd::Zero(samples.size());
+            // int hrad = 1;
+            int nrad = 3;
+            for (size_t i = 0; i < samples.size(); ++i)
+            {
+                PointIdVec a = kd3.radius(x, y, samples(i), (2*nrad+1)*m_hres/2);
+                // PointIdVec b = kd3.radius(x, y, samples(i), (2*hrad+1)*m_hres/2);
+                MAPCPNeighbors(i) = a.size();
+                // MAPCPImmediateNeighbors(i) = b.size();
+                
+                // double wsum = 0.0;
+                // for (auto const& p : b)
+                // {
+                //     double xx = view->getFieldAs<double>(Id::X, p);
+                //     double yy = view->getFieldAs<double>(Id::Y, p);
+                //     double zz = view->getFieldAs<double>(Id::Z, p);
+                //     double norm = (xx-x)*(xx-x)+(yy-y)*(yy-y)+(zz-samples(i))*(zz-samples(i));
+                //     double arg = -norm / (2 * m_hres * m_hres);
+                //     wsum += std::exp(arg);
+                // }
+                // 
+                // MAPCPGaussianWeights(i) = wsum;
+            }
+            // std::cerr << "N\n";
+            // std::cerr << MAPCPNeighbors.transpose() << std::endl;
+            // std::cerr << "Ni\n";
+            // std::cerr << MAPCPImmediateNeighbors.transpose() << std::endl;
+            // std::cerr << "P\n";
+            // std::cerr << MAPCPGaussianWeights.transpose() << std::endl;
             
             // Find neighbors in raw cloud at current XY cell.
             PointIdVec neighbors = kd2.radius(x, y, m_radius);
@@ -122,7 +154,6 @@ PointViewSet RKDFilter::run(PointViewPtr view)
             VectorXd z_vals(neighbors.size());
             for (PointId idx = 0; idx < neighbors.size(); ++idx)
                 z_vals(idx) = view->getFieldAs<double>(Id::Z, neighbors[idx]);
-            // std::cerr << z_vals.transpose() << std::endl;
             
             // Sample density for the current column.
             VectorXd density = VectorXd::Zero(samples.size());
@@ -138,6 +169,8 @@ PointViewSet RKDFilter::run(PointViewPtr view)
                 density(i) = temp.sum() / (temp.size()*m_bw);
             }
             density /= density.maxCoeff();
+            
+            // std::cerr << "density\n";
             // std::cerr << density.transpose() << std::endl;
             
             // MATLAB diff command - approximate derivative
@@ -161,22 +194,22 @@ PointViewSet RKDFilter::run(PointViewPtr view)
             VectorXd diff2(samples.size()-2);
             for (int i = 1; i < samples.size()-1; ++i)
                 diff2(i-1) = sign(i) - sign(i-1);
+                
+            // std::cerr << "diff2\n";
+            // std::cerr << diff2.transpose() << std::endl;
             
             // Peaks occur at diff2 == -2
             VectorXd vals = VectorXd::Zero(samples.size()-2);
             VectorXd peaks = VectorXd::Zero(samples.size()-2);
             int nPeaks = 0;
-            // std::cerr << diff2.transpose() << std::endl;
             for (int i = 0; i < samples.size()-2; ++i)
             {
-                if (diff2(i) == -2)
+                if (diff2(i) == -2 && MAPCPNeighbors(i) > 2)
                 {
                     vals(nPeaks) = density(i);
                     peaks(nPeaks++) = samples(i);
                 }
             }
-            
-            // printf("npeaks %d\n", nPeaks);
             
             if (nPeaks == 0)
                 continue;
@@ -184,7 +217,7 @@ PointViewSet RKDFilter::run(PointViewPtr view)
             vals.conservativeResize(nPeaks);
             peaks.conservativeResize(nPeaks);
             
-            vals /= vals.maxCoeff();
+            vals /= vals.sum();
             
             // Make a copy of the vals, to sort in place, and determine a threshold.
             // auto valcopy = vals;
@@ -204,12 +237,13 @@ PointViewSet RKDFilter::run(PointViewPtr view)
             {
               // printf("%0.2f\n", vals(i));
                 // if (vals(i) > thresh)
-                if (vals(i) == 1.0)
-                {
+                // if (vals(i) == 1.0)
+                // {
                   // printf("Peak %d of %d at %0.2f (%0.2f > %0.2f)\n", i, nPeaks, peaks(i), vals(i), thresh);
                     PointIdVec idx = kd3.neighbors(x, y, peaks(i), 1);
+                    view->setField(m_rangeDensity, idx[0], vals(i));
                     output->appendPoint(*view, idx[0]);
-                }
+                // }
             }
         }
     }
