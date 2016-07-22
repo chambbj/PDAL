@@ -107,6 +107,18 @@ PointViewSet RKDFilter::run(PointViewPtr view)
     log()->get(LogLevel::Debug) << "# rows = " << rows << std::endl;
     log()->get(LogLevel::Debug) << "# cols = " << cols << std::endl;
   
+    VectorXd MAPCPNeighbors = VectorXd::Zero(n);
+    VectorXd density = VectorXd::Zero(n);
+    VectorXd x_vals, y_vals, z_vals;
+    VectorXd x_diff, y_diff, z_diff, temp;
+    VectorXd vals = VectorXd::Zero(n-2);
+    VectorXd peaks = VectorXd::Zero(n-2);
+    VectorXd area = VectorXd::Zero(n-2);
+    VectorXd areaFrac = VectorXd::Zero(n-2);
+    VectorXd diff = VectorXd::Zero(n-1);
+    VectorXd sign = VectorXd::Zero(n-1);
+    VectorXd diff2 = VectorXd::Zero(n-2);
+    
     // Initialize the samples.
     VectorXd samples(n);
     for (int i = 0; i < samples.size(); ++i)
@@ -118,58 +130,74 @@ PointViewSet RKDFilter::run(PointViewPtr view)
         for (int c = 0; c < cols; ++c)
         {
             double x = bounds.minx + c * m_hres;
-        
-            VectorXd MAPCPNeighbors = VectorXd::Zero(samples.size());
-            // VectorXd MAPCPImmediateNeighbors = VectorXd::Zero(samples.size());
-            // VectorXd MAPCPGaussianWeights = VectorXd::Zero(samples.size());
-            // int hrad = 1;
-            int nrad = 3;
-            for (size_t i = 0; i < samples.size(); ++i)
-            {
-                PointIdVec a = kd3.radius(x, y, samples(i), (2*nrad+1)*m_hres/2);
-                // PointIdVec b = kd3.radius(x, y, samples(i), (2*hrad+1)*m_hres/2);
-                MAPCPNeighbors(i) = a.size();
-                // MAPCPImmediateNeighbors(i) = b.size();
-                
-                // double wsum = 0.0;
-                // for (auto const& p : b)
-                // {
-                //     double xx = view->getFieldAs<double>(Id::X, p);
-                //     double yy = view->getFieldAs<double>(Id::Y, p);
-                //     double zz = view->getFieldAs<double>(Id::Z, p);
-                //     double norm = (xx-x)*(xx-x)+(yy-y)*(yy-y)+(zz-samples(i))*(zz-samples(i));
-                //     double arg = -norm / (2 * m_hres * m_hres);
-                //     wsum += std::exp(arg);
-                // }
-                // 
-                // MAPCPGaussianWeights(i) = wsum;
-            }
-            // std::cerr << "N\n";
-            // std::cerr << MAPCPNeighbors.transpose() << std::endl;
-            // std::cerr << "Ni\n";
-            // std::cerr << MAPCPImmediateNeighbors.transpose() << std::endl;
-            // std::cerr << "P\n";
-            // std::cerr << MAPCPGaussianWeights.transpose() << std::endl;
+            
+            // // VectorXd MAPCPImmediateNeighbors = VectorXd::Zero(samples.size());
+            // // VectorXd MAPCPGaussianWeights = VectorXd::Zero(samples.size());
+            // // int hrad = 1;
+            // int nrad = 3;
+            // for (size_t i = 0; i < samples.size(); ++i)
+            // {
+            //     PointIdVec a = kd3.radius(x, y, samples(i), (2*nrad+1)*m_hres/2);
+            //     // PointIdVec b = kd3.radius(x, y, samples(i), (2*hrad+1)*m_hres/2);
+            //     MAPCPNeighbors(i) = a.size();
+            //     // MAPCPImmediateNeighbors(i) = b.size();
+            //     
+            //     // double wsum = 0.0;
+            //     // for (auto const& p : b)
+            //     // {
+            //     //     double xx = view->getFieldAs<double>(Id::X, p);
+            //     //     double yy = view->getFieldAs<double>(Id::Y, p);
+            //     //     double zz = view->getFieldAs<double>(Id::Z, p);
+            //     //     double norm = (xx-x)*(xx-x)+(yy-y)*(yy-y)+(zz-samples(i))*(zz-samples(i));
+            //     //     double arg = -norm / (2 * m_hres * m_hres);
+            //     //     wsum += std::exp(arg);
+            //     // }
+            //     // 
+            //     // MAPCPGaussianWeights(i) = wsum;
+            // }
+            // // std::cerr << "N\n";
+            // // std::cerr << MAPCPNeighbors.transpose() << std::endl;
+            // // std::cerr << "Ni\n";
+            // // std::cerr << MAPCPImmediateNeighbors.transpose() << std::endl;
+            // // std::cerr << "P\n";
+            // // std::cerr << MAPCPGaussianWeights.transpose() << std::endl;
             
             // Find neighbors in raw cloud at current XY cell.
             PointIdVec neighbors = kd2.radius(x, y, m_radius);
             
-            // Record Z values from each of the neighbors.
-            VectorXd z_vals(neighbors.size());
+            // Record values from each of the neighbors.
+            x_vals.resize(neighbors.size());
+            y_vals.resize(neighbors.size());
+            z_vals.resize(neighbors.size());
             for (PointId idx = 0; idx < neighbors.size(); ++idx)
+            {
+                x_vals(idx) = view->getFieldAs<double>(Id::X, neighbors[idx]);
+                y_vals(idx) = view->getFieldAs<double>(Id::Y, neighbors[idx]);
                 z_vals(idx) = view->getFieldAs<double>(Id::Z, neighbors[idx]);
+            }
+            
+            x_diff.resize(neighbors.size());
+            y_diff.resize(neighbors.size());
+            z_diff.resize(neighbors.size());
+            temp.resize(neighbors.size());
             
             // Sample density for the current column.
-            VectorXd density = VectorXd::Zero(samples.size());
+            double invbw = 1 / m_bw;
+            double invdenom = 1 / std::sqrt(2*3.14159);
             for (size_t i = 0; i < samples.size(); ++i)
             {
-                VectorXd temp = z_vals;
-                temp = temp - VectorXd::Constant(temp.size(), samples(i));
-                temp /= m_bw;
+                x_diff = x_vals - VectorXd::Constant(x_vals.size(), x);
+                y_diff = y_vals - VectorXd::Constant(y_vals.size(), y);
+                z_diff = z_vals - VectorXd::Constant(z_vals.size(), samples(i));
+                x_diff = x_diff.cwiseProduct(x_diff);
+                y_diff = y_diff.cwiseProduct(y_diff);
+                z_diff = z_diff.cwiseProduct(z_diff);
+                temp = (x_diff + y_diff + z_diff).cwiseSqrt();
+                temp *= invbw;;
                 temp = temp.cwiseProduct(temp);
                 temp *= -0.5;
                 temp = temp.array().exp().matrix();
-                temp /= std::sqrt(2*3.14159);
+                temp *= invdenom;
                 density(i) = temp.sum() / (temp.size()*m_bw);
             }
             density /= density.maxCoeff();
@@ -178,12 +206,9 @@ PointViewSet RKDFilter::run(PointViewPtr view)
             // std::cerr << density.transpose() << std::endl;
             
             // MATLAB diff command - approximate derivative
-            VectorXd diff(samples.size()-1);
-            for (int i = 1; i < samples.size(); ++i)
-                diff(i-1) = density(i) - density(i-1);
+            diff = density.tail(samples.size()-1) - density.head(samples.size()-1);
             
             // MATLAB sign command - sigmoid function
-            VectorXd sign(samples.size()-1);
             for (int i = 0; i < samples.size()-1; ++i)
             {
                 if (diff(i) < 0)
@@ -195,23 +220,29 @@ PointViewSet RKDFilter::run(PointViewPtr view)
             }
             
             // MATLAB diff command again - approxiate derivative
-            VectorXd diff2(samples.size()-2);
-            for (int i = 1; i < samples.size()-1; ++i)
-                diff2(i-1) = sign(i) - sign(i-1);
+            diff2 = sign.tail(samples.size()-2) - sign.head(samples.size()-2);
                 
             // std::cerr << "diff2\n";
             // std::cerr << diff2.transpose() << std::endl;
             
+            vals.resize(n-2);
+            peaks.resize(n-2);
+            area.resize(n-2);
+            areaFrac.resize(n-2);
+            
             // Peaks occur at diff2 == -2
-            VectorXd vals = VectorXd::Zero(samples.size()-2);
-            VectorXd peaks = VectorXd::Zero(samples.size()-2);
-            VectorXd area = VectorXd::Zero(samples.size()-2);
-            VectorXd areaFrac = VectorXd::Zero(samples.size()-2);
             int nPeaks = 0;
             for (int i = 0; i < samples.size()-2; ++i)
             {
-                if (diff2(i) == -2 && MAPCPNeighbors(i) > 2)
+                // if (diff2(i) == -2 && MAPCPNeighbors(i) > 2)
+                if (diff2(i) == -2)
                 {
+                    int nrad = 3;
+                    int nei = kd3.radius(x, y, samples(i), (2*nrad+1)*m_hres/2).size();
+                    // MAPCPNeighbors(i) = a.size();
+                    if (nei <=2)
+                        continue;
+                  
                     vals(nPeaks) = density(i);
                     peaks(nPeaks) = samples(i);
                   
