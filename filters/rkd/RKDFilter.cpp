@@ -78,22 +78,22 @@ PointViewSet RKDFilter::run(PointViewPtr view)
 {
     using namespace Eigen;
     using namespace Dimension;
-    
+
     typedef std::vector<PointId> PointIdVec;
 
-    // The 2D index is used to find neighbors in a Z column.    
+    // The 2D index is used to find neighbors in a Z column.
     KD2Index kd2(*view);
     kd2.build();
-    
+
     // The 3D index is used to find the nearest neighbor.
     KD3Index kd3(*view);
     kd3.build();
-    
+
     PointViewSet viewSet;
-    
+
     // Create the output PointView.
     PointViewPtr output = view->makeNew();
-    
+
     // Compute bounds to derive number of rows, cols, and samples.
     BOX3D bounds;
     view->calculateBounds(bounds);
@@ -106,7 +106,7 @@ PointViewSet RKDFilter::run(PointViewPtr view)
     log()->get(LogLevel::Debug) << "# samples = " << n << std::endl;
     log()->get(LogLevel::Debug) << "# rows = " << rows << std::endl;
     log()->get(LogLevel::Debug) << "# cols = " << cols << std::endl;
-  
+
     VectorXd MAPCPNeighbors = VectorXd::Zero(n);
     VectorXd density = VectorXd::Zero(n);
     VectorXd x_vals, y_vals, z_vals;
@@ -118,22 +118,22 @@ PointViewSet RKDFilter::run(PointViewPtr view)
     VectorXd diff = VectorXd::Zero(n-1);
     VectorXd sign = VectorXd::Zero(n-1);
     VectorXd diff2 = VectorXd::Zero(n-2);
-    
+
     // Initialize the samples.
     VectorXd samples(n);
     for (int i = 0; i < samples.size(); ++i)
         samples(i) = bounds.minz + i * m_vres;
-            
+
     for (int r = 0; r < rows; ++r)
     {
         double y = bounds.miny + r * m_hres;
         for (int c = 0; c < cols; ++c)
         {
             double x = bounds.minx + c * m_hres;
-            
+
             // Find neighbors in raw cloud at current XY cell.
             PointIdVec neighbors = kd2.radius(x, y, m_radius);
-            
+
             // Record values from each of the neighbors.
             x_vals.resize(neighbors.size());
             y_vals.resize(neighbors.size());
@@ -144,12 +144,12 @@ PointViewSet RKDFilter::run(PointViewPtr view)
                 y_vals(idx) = view->getFieldAs<double>(Id::Y, neighbors[idx]);
                 z_vals(idx) = view->getFieldAs<double>(Id::Z, neighbors[idx]);
             }
-            
+
             x_diff.resize(neighbors.size());
             y_diff.resize(neighbors.size());
             z_diff.resize(neighbors.size());
             temp.resize(neighbors.size());
-            
+
             // Sample density for the current column.
             double invbw = 1 / m_bw;
             double invdenom = 1 / std::sqrt(2*3.14159);
@@ -170,13 +170,13 @@ PointViewSet RKDFilter::run(PointViewPtr view)
                 density(i) = temp.sum() / (temp.size()*m_bw);
             }
             density /= density.maxCoeff();
-            
+
             // std::cerr << "density\n";
             // std::cerr << density.transpose() << std::endl;
-            
+
             // MATLAB diff command - approximate derivative
             diff = density.tail(samples.size()-1) - density.head(samples.size()-1);
-            
+
             // MATLAB sign command - sigmoid function
             for (int i = 0; i < samples.size()-1; ++i)
             {
@@ -187,18 +187,18 @@ PointViewSet RKDFilter::run(PointViewPtr view)
                 else
                     sign(i) = 0;
             }
-            
+
             // MATLAB diff command again - approxiate derivative
             diff2 = sign.tail(samples.size()-2) - sign.head(samples.size()-2);
-                
+
             // std::cerr << "diff2\n";
             // std::cerr << diff2.transpose() << std::endl;
-            
+
             vals.resize(n-2);
             peaks.resize(n-2);
             area.resize(n-2);
             areaFrac.resize(n-2);
-            
+
             // Peaks occur at diff2 == -2
             int nPeaks = 0;
             for (int i = 0; i < samples.size()-2; ++i)
@@ -210,11 +210,11 @@ PointViewSet RKDFilter::run(PointViewPtr view)
                     int nei = kd3.radius(x, y, samples(i), rad).size();
                     if (nei <=2)
                         continue;
-                  
+
                     vals(nPeaks) = density(i);
                     peaks(nPeaks) = samples(i);
-                  
-                    double peakArea = density(i);  
+
+                    double peakArea = density(i);
                     for (int j = i+1; j < samples.size()-2; ++j)
                     {
                         if (diff2(j) > 0)
@@ -227,39 +227,39 @@ PointViewSet RKDFilter::run(PointViewPtr view)
                             break;
                         peakArea += density(j);
                     }
-                    
+
                     area(nPeaks) = peakArea;
                     areaFrac(nPeaks) = peakArea / density.sum();
-                    
+
                     nPeaks++;
                 }
             }
-            
+
             if (nPeaks == 0)
                 continue;
-            
+
             vals.conservativeResize(nPeaks);
             peaks.conservativeResize(nPeaks);
             area.conservativeResize(nPeaks);
             areaFrac.conservativeResize(nPeaks);
-            
+
             vals /= vals.sum();
-            
+
             // For each peak of sufficient size/strength, find the nearest
             // neighbor in the raw data and append to the output view.
             for (int i = 0; i < nPeaks; ++i)
             {
-                    PointIdVec idx = kd3.neighbors(x, y, peaks(i), 1);
-                    view->setField(m_rangeDensity, idx[0], vals(i));
-                    view->setField(Id::NumberOfReturns, idx[0], nPeaks);
-                    view->setField(Id::ReturnNumber, idx[0], nPeaks-i);
-                    view->setField(Id::Intensity, idx[0], area(i));
-                    view->setField(Id::Reflectance, idx[0], areaFrac(i));
-                    output->appendPoint(*view, idx[0]);
+                PointIdVec idx = kd3.neighbors(x, y, peaks(i), 1);
+                view->setField(m_rangeDensity, idx[0], vals(i));
+                view->setField(Id::NumberOfReturns, idx[0], nPeaks);
+                view->setField(Id::ReturnNumber, idx[0], nPeaks-i);
+                view->setField(Id::Intensity, idx[0], area(i));
+                view->setField(Id::Reflectance, idx[0], areaFrac(i));
+                output->appendPoint(*view, idx[0]);
             }
         }
     }
-    
+
     viewSet.erase(view);
     viewSet.insert(output);
     return viewSet;
