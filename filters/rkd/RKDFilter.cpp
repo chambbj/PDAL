@@ -131,37 +131,6 @@ PointViewSet RKDFilter::run(PointViewPtr view)
         {
             double x = bounds.minx + c * m_hres;
             
-            // // VectorXd MAPCPImmediateNeighbors = VectorXd::Zero(samples.size());
-            // // VectorXd MAPCPGaussianWeights = VectorXd::Zero(samples.size());
-            // // int hrad = 1;
-            // int nrad = 3;
-            // for (size_t i = 0; i < samples.size(); ++i)
-            // {
-            //     PointIdVec a = kd3.radius(x, y, samples(i), (2*nrad+1)*m_hres/2);
-            //     // PointIdVec b = kd3.radius(x, y, samples(i), (2*hrad+1)*m_hres/2);
-            //     MAPCPNeighbors(i) = a.size();
-            //     // MAPCPImmediateNeighbors(i) = b.size();
-            //     
-            //     // double wsum = 0.0;
-            //     // for (auto const& p : b)
-            //     // {
-            //     //     double xx = view->getFieldAs<double>(Id::X, p);
-            //     //     double yy = view->getFieldAs<double>(Id::Y, p);
-            //     //     double zz = view->getFieldAs<double>(Id::Z, p);
-            //     //     double norm = (xx-x)*(xx-x)+(yy-y)*(yy-y)+(zz-samples(i))*(zz-samples(i));
-            //     //     double arg = -norm / (2 * m_hres * m_hres);
-            //     //     wsum += std::exp(arg);
-            //     // }
-            //     // 
-            //     // MAPCPGaussianWeights(i) = wsum;
-            // }
-            // // std::cerr << "N\n";
-            // // std::cerr << MAPCPNeighbors.transpose() << std::endl;
-            // // std::cerr << "Ni\n";
-            // // std::cerr << MAPCPImmediateNeighbors.transpose() << std::endl;
-            // // std::cerr << "P\n";
-            // // std::cerr << MAPCPGaussianWeights.transpose() << std::endl;
-            
             // Find neighbors in raw cloud at current XY cell.
             PointIdVec neighbors = kd2.radius(x, y, m_radius);
             
@@ -234,12 +203,11 @@ PointViewSet RKDFilter::run(PointViewPtr view)
             int nPeaks = 0;
             for (int i = 0; i < samples.size()-2; ++i)
             {
-                // if (diff2(i) == -2 && MAPCPNeighbors(i) > 2)
                 if (diff2(i) == -2)
                 {
                     int nrad = 3;
-                    int nei = kd3.radius(x, y, samples(i), (2*nrad+1)*m_hres/2).size();
-                    // MAPCPNeighbors(i) = a.size();
+                    double rad = (2*nrad+1)*m_hres/2;
+                    int nei = kd3.radius(x, y, samples(i), rad).size();
                     if (nei <=2)
                         continue;
                   
@@ -277,35 +245,17 @@ PointViewSet RKDFilter::run(PointViewPtr view)
             
             vals /= vals.sum();
             
-            // Make a copy of the vals, to sort in place, and determine a threshold.
-            // auto valcopy = vals;
-            // std::sort(valcopy.data(), valcopy.data()+valcopy.size(),std::greater<double>());
-            
-            // Struggling with a good way to set a threshold. Highest peak is
-            // pretty good. More would be better. Where do we stop?
-            // double thresh;
-            // if (nPeaks > 1)
-            //     thresh = valcopy(1);
-            // else
-            //     thresh = valcopy(0);
-            
             // For each peak of sufficient size/strength, find the nearest
             // neighbor in the raw data and append to the output view.
             for (int i = 0; i < nPeaks; ++i)
             {
-              // printf("%0.2f\n", vals(i));
-                // if (vals(i) > thresh)
-                // if (vals(i) == 1.0)
-                // {
-                  // printf("Peak %d of %d at %0.2f (%0.2f > %0.2f)\n", i, nPeaks, peaks(i), vals(i), thresh);
                     PointIdVec idx = kd3.neighbors(x, y, peaks(i), 1);
                     view->setField(m_rangeDensity, idx[0], vals(i));
                     view->setField(Id::NumberOfReturns, idx[0], nPeaks);
-                    view->setField(Id::ReturnNumber, idx[0], i+1);
+                    view->setField(Id::ReturnNumber, idx[0], nPeaks-i);
                     view->setField(Id::Intensity, idx[0], area(i));
                     view->setField(Id::Reflectance, idx[0], areaFrac(i));
                     output->appendPoint(*view, idx[0]);
-                // }
             }
         }
     }
