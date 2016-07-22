@@ -67,7 +67,7 @@ void RKDFilter::addArgs(ProgramArgs& args)
 void RKDFilter::addDimensions(PointLayoutPtr layout)
 {
     using namespace Dimension;
-    m_rangeDensity = layout->registerOrAssignDim("Density", Type::Double);
+    // m_rangeDensity = layout->registerOrAssignDim("Density", Type::Double);
     layout->registerDim(Id::Intensity);
     layout->registerDim(Id::Reflectance);
     layout->registerDim(Id::ReturnNumber);
@@ -107,11 +107,12 @@ PointViewSet RKDFilter::run(PointViewPtr view)
     log()->get(LogLevel::Debug) << "# rows = " << rows << std::endl;
     log()->get(LogLevel::Debug) << "# cols = " << cols << std::endl;
 
+    // All my vectors are out here b/c I thought there may be some savings in just allocating them once, and resizing, resetting as needed in the loops. Not sure it made that much of a difference...
     VectorXd MAPCPNeighbors = VectorXd::Zero(n);
     VectorXd density = VectorXd::Zero(n);
     VectorXd x_vals, y_vals, z_vals;
     VectorXd x_diff, y_diff, z_diff, temp;
-    VectorXd vals = VectorXd::Zero(n-2);
+    // VectorXd vals = VectorXd::Zero(n-2);
     VectorXd peaks = VectorXd::Zero(n-2);
     VectorXd area = VectorXd::Zero(n-2);
     VectorXd areaFrac = VectorXd::Zero(n-2);
@@ -153,6 +154,7 @@ PointViewSet RKDFilter::run(PointViewPtr view)
             // Sample density for the current column.
             double invbw = 1 / m_bw;
             double invdenom = 1 / std::sqrt(2*3.14159);
+            double invdenom2 = 1 / (temp.size() * m_bw);
             for (size_t i = 0; i < samples.size(); ++i)
             {
                 x_diff = x_vals - VectorXd::Constant(x_vals.size(), x);
@@ -161,21 +163,24 @@ PointViewSet RKDFilter::run(PointViewPtr view)
                 x_diff = x_diff.cwiseProduct(x_diff);
                 y_diff = y_diff.cwiseProduct(y_diff);
                 z_diff = z_diff.cwiseProduct(z_diff);
-                temp = (x_diff + y_diff + z_diff).cwiseSqrt();
-                temp *= invbw;;
-                temp = temp.cwiseProduct(temp);
-                temp *= -0.5;
-                temp = temp.array().exp().matrix();
-                temp *= invdenom;
-                density(i) = temp.sum() / (temp.size()*m_bw);
+                temp = (x_diff + y_diff + z_diff).cwiseSqrt() * invbw;
+                temp = temp.cwiseProduct(temp) * -0.5;
+                temp = temp.array().exp().matrix() * invdenom;
+                density(i) = temp.sum() * invdenom2;
             }
-            density /= density.maxCoeff();
+            // how critical is it to normalize this in some way? it does affect the peak area, the overall area, and therefor the intensity and reflectance
+            // density /= density.maxCoeff();
 
             // std::cerr << "density\n";
             // std::cerr << density.transpose() << std::endl;
 
+            auto diffEq = [](VectorXd vec)
+            {
+                return vec.tail(vec.size()-1)-vec.head(vec.size()-1);
+            };
+
             // MATLAB diff command - approximate derivative
-            diff = density.tail(samples.size()-1) - density.head(samples.size()-1);
+            diff = diffEq(density);
 
             // MATLAB sign command - sigmoid function
             for (int i = 0; i < samples.size()-1; ++i)
@@ -189,31 +194,30 @@ PointViewSet RKDFilter::run(PointViewPtr view)
             }
 
             // MATLAB diff command again - approxiate derivative
-            diff2 = sign.tail(samples.size()-2) - sign.head(samples.size()-2);
+            diff2 = diffEq(sign);
 
             // std::cerr << "diff2\n";
             // std::cerr << diff2.transpose() << std::endl;
 
-            vals.resize(n-2);
+            // vals.resize(n-2);
             peaks.resize(n-2);
             area.resize(n-2);
             areaFrac.resize(n-2);
+            
+            double invdensitysum = 1 / density.sum();
 
             // Peaks occur at diff2 == -2
             int nPeaks = 0;
+            int nrad = 3;
+            double rad = (2*nrad+1)*m_hres/2;
             for (int i = 0; i < samples.size()-2; ++i)
             {
                 if (diff2(i) == -2)
                 {
-                    int nrad = 3;
-                    double rad = (2*nrad+1)*m_hres/2;
                     int nei = kd3.radius(x, y, samples(i), rad).size();
-                    if (nei <=2)
+                    if (nei < 4)
                         continue;
-
-                    vals(nPeaks) = density(i);
-                    peaks(nPeaks) = samples(i);
-
+                        
                     double peakArea = density(i);
                     for (int j = i+1; j < samples.size()-2; ++j)
                     {
@@ -227,9 +231,13 @@ PointViewSet RKDFilter::run(PointViewPtr view)
                             break;
                         peakArea += density(j);
                     }
+                    // if (peakArea * invdensitysum < 0.1)
+                    //     continue;
 
+                    // vals(nPeaks) = density(i);
+                    peaks(nPeaks) = samples(i);
                     area(nPeaks) = peakArea;
-                    areaFrac(nPeaks) = peakArea / density.sum();
+                    areaFrac(nPeaks) = peakArea * invdensitysum;
 
                     nPeaks++;
                 }
@@ -238,19 +246,19 @@ PointViewSet RKDFilter::run(PointViewPtr view)
             if (nPeaks == 0)
                 continue;
 
-            vals.conservativeResize(nPeaks);
+            // vals.conservativeResize(nPeaks);
             peaks.conservativeResize(nPeaks);
             area.conservativeResize(nPeaks);
             areaFrac.conservativeResize(nPeaks);
 
-            vals /= vals.sum();
+            // vals /= vals.sum();
 
             // For each peak of sufficient size/strength, find the nearest
             // neighbor in the raw data and append to the output view.
             for (int i = 0; i < nPeaks; ++i)
             {
                 PointIdVec idx = kd3.neighbors(x, y, peaks(i), 1);
-                view->setField(m_rangeDensity, idx[0], vals(i));
+                // view->setField(m_rangeDensity, idx[0], vals(i));
                 view->setField(Id::NumberOfReturns, idx[0], nPeaks);
                 view->setField(Id::ReturnNumber, idx[0], nPeaks-i);
                 view->setField(Id::Intensity, idx[0], area(i));
