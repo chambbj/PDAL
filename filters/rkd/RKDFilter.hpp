@@ -62,7 +62,7 @@ public:
     std::string getName() const;
 
 private:
-    Dimension::Id m_rangeDensity;
+    Dimension::Id m_rangeDensity, m_frameNumber;
     double m_bw, m_hres, m_vres, m_radius;
 
     virtual void addArgs(ProgramArgs& args);
