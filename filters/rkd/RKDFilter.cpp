@@ -67,8 +67,8 @@ void RKDFilter::addArgs(ProgramArgs& args)
 void RKDFilter::addDimensions(PointLayoutPtr layout)
 {
     using namespace Dimension;
-    // m_rangeDensity = layout->registerOrAssignDim("Density", Type::Double);
-    layout->registerDim(Id::Intensity);
+    m_rangeDensity = layout->registerOrAssignDim("Density", Type::Double);
+    layout->registerDim(Id::Amplitude);
     layout->registerDim(Id::Reflectance);
     layout->registerDim(Id::ReturnNumber);
     layout->registerDim(Id::NumberOfReturns);
@@ -112,7 +112,7 @@ PointViewSet RKDFilter::run(PointViewPtr view)
     VectorXd density = VectorXd::Zero(n);
     VectorXd x_vals, y_vals, z_vals;
     VectorXd x_diff, y_diff, z_diff, temp;
-    // VectorXd vals = VectorXd::Zero(n-2);
+    VectorXd vals = VectorXd::Zero(n-2);
     VectorXd peaks = VectorXd::Zero(n-2);
     VectorXd area = VectorXd::Zero(n-2);
     VectorXd areaFrac = VectorXd::Zero(n-2);
@@ -153,7 +153,8 @@ PointViewSet RKDFilter::run(PointViewPtr view)
 
             // Sample density for the current column.
             double invbw = 1 / m_bw;
-            double invdenom = 1 / std::sqrt(2*3.14159);
+            const double pi = 3.141592653589793;
+            double invdenom = 1 / std::sqrt(2 * pi);
             double invdenom2 = 1 / (temp.size() * m_bw);
             for (size_t i = 0; i < samples.size(); ++i)
             {
@@ -169,10 +170,16 @@ PointViewSet RKDFilter::run(PointViewPtr view)
                 density(i) = temp.sum() * invdenom2;
             }
             // how critical is it to normalize this in some way? it does affect the peak area, the overall area, and therefor the intensity and reflectance
-            // density /= density.maxCoeff();
+            // density /= density.sum();
+            // std::cerr << density.sum() << "\t" << density.norm() << "\t" << density.maxCoeff() << std::endl;
+            // std::cerr << density.sum() << std::endl;
+            // density.normalize();
+            // std::cerr << density.sum() << std::endl;
 
-            // std::cerr << "density\n";
-            // std::cerr << density.transpose() << std::endl;
+            std::cerr << "peaks\n";
+            std::cerr << samples.transpose() << std::endl;
+            std::cerr << "density\n";
+            std::cerr << density.transpose() << std::endl;
 
             auto diffEq = [](VectorXd vec)
             {
@@ -199,13 +206,13 @@ PointViewSet RKDFilter::run(PointViewPtr view)
             // std::cerr << "diff2\n";
             // std::cerr << diff2.transpose() << std::endl;
 
-            // vals.resize(n-2);
+            vals.resize(n-2);
             peaks.resize(n-2);
             area.resize(n-2);
             areaFrac.resize(n-2);
             
             double invdensitysum = 1 / density.sum();
-
+            
             // Peaks occur at diff2 == -2
             int nPeaks = 0;
             int nrad = 3;
@@ -215,7 +222,7 @@ PointViewSet RKDFilter::run(PointViewPtr view)
                 if (diff2(i) == -2)
                 {
                     int nei = kd3.radius(x, y, samples(i), rad).size();
-                    if (nei < 4)
+                    if (nei < 3)
                         continue;
                         
                     double peakArea = density(i);
@@ -235,6 +242,7 @@ PointViewSet RKDFilter::run(PointViewPtr view)
                     //     continue;
 
                     // vals(nPeaks) = density(i);
+                    vals(nPeaks) = nei;  // experiment, write number of neighbors out to density channel
                     peaks(nPeaks) = samples(i);
                     area(nPeaks) = peakArea;
                     areaFrac(nPeaks) = peakArea * invdensitysum;
@@ -246,10 +254,16 @@ PointViewSet RKDFilter::run(PointViewPtr view)
             if (nPeaks == 0)
                 continue;
 
-            // vals.conservativeResize(nPeaks);
+            vals.conservativeResize(nPeaks);
             peaks.conservativeResize(nPeaks);
             area.conservativeResize(nPeaks);
             areaFrac.conservativeResize(nPeaks);
+            
+            // std::cerr << vals.transpose() << std::endl;
+            // std::cerr << peaks.transpose() << std::endl;
+            std::cerr << "area\n";
+            std::cerr << area.transpose() << std::endl;
+            // std::cerr << areaFrac.transpose() << std::endl;
 
             // vals /= vals.sum();
 
@@ -258,12 +272,24 @@ PointViewSet RKDFilter::run(PointViewPtr view)
             for (int i = 0; i < nPeaks; ++i)
             {
                 PointIdVec idx = kd3.neighbors(x, y, peaks(i), 1);
-                // view->setField(m_rangeDensity, idx[0], vals(i));
+                view->setField(m_rangeDensity, idx[0], vals(i));
                 view->setField(Id::NumberOfReturns, idx[0], nPeaks);
                 view->setField(Id::ReturnNumber, idx[0], nPeaks-i);
-                view->setField(Id::Intensity, idx[0], area(i));
+                view->setField(Id::Amplitude, idx[0], area(i));
                 view->setField(Id::Reflectance, idx[0], areaFrac(i));
                 output->appendPoint(*view, idx[0]);
+                /*
+                PointIdVec idx = kd3.radius(x, y, peaks(i), m_hres);
+                for (auto const& id : idx)
+                {
+                    view->setField(m_rangeDensity, id, vals(i));
+                    view->setField(Id::NumberOfReturns, id, nPeaks);
+                    view->setField(Id::ReturnNumber, id, nPeaks-i);
+                    view->setField(Id::Amplitude, id, area(i));
+                    view->setField(Id::Reflectance, id, areaFrac(i));
+                    output->appendPoint(*view, id);
+                }
+                */
             }
         }
     }
