@@ -176,10 +176,10 @@ PointViewSet RKDFilter::run(PointViewPtr view)
             // density.normalize();
             // std::cerr << density.sum() << std::endl;
 
-            std::cerr << "peaks\n";
-            std::cerr << samples.transpose() << std::endl;
-            std::cerr << "density\n";
-            std::cerr << density.transpose() << std::endl;
+            // std::cerr << "peaks\n";
+            // std::cerr << samples.transpose() << std::endl;
+            // std::cerr << "density\n";
+            // std::cerr << density.transpose() << std::endl;
 
             auto diffEq = [](VectorXd vec)
             {
@@ -241,8 +241,8 @@ PointViewSet RKDFilter::run(PointViewPtr view)
                     // if (peakArea * invdensitysum < 0.1)
                     //     continue;
 
-                    // vals(nPeaks) = density(i);
-                    vals(nPeaks) = nei;  // experiment, write number of neighbors out to density channel
+                    vals(nPeaks) = density(i);
+                    // vals(nPeaks) = nei;  // experiment, write number of neighbors out to density channel
                     peaks(nPeaks) = samples(i);
                     area(nPeaks) = peakArea;
                     areaFrac(nPeaks) = peakArea * invdensitysum;
@@ -261,16 +261,20 @@ PointViewSet RKDFilter::run(PointViewPtr view)
             
             // std::cerr << vals.transpose() << std::endl;
             // std::cerr << peaks.transpose() << std::endl;
-            std::cerr << "area\n";
-            std::cerr << area.transpose() << std::endl;
+            // std::cerr << "area\n";
+            // std::cerr << area.transpose() << std::endl;
             // std::cerr << areaFrac.transpose() << std::endl;
 
             // vals /= vals.sum();
+            double maxval = vals.maxCoeff();
 
             // For each peak of sufficient size/strength, find the nearest
             // neighbor in the raw data and append to the output view.
             for (int i = 0; i < nPeaks; ++i)
             {
+                if (vals(i) < maxval)
+                    continue;
+                    
                 PointIdVec idx = kd3.neighbors(x, y, peaks(i), 1);
                 view->setField(m_rangeDensity, idx[0], vals(i));
                 view->setField(Id::NumberOfReturns, idx[0], nPeaks);
