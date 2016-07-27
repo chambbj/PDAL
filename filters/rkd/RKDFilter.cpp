@@ -51,6 +51,17 @@ static PluginInfo const s_info =
 
 CREATE_STATIC_PLUGIN(1, 0, RKDFilter, Filter, s_info)
 
+struct peak {
+    double loc;
+    double area;
+};
+
+struct by_area {
+    bool operator()(peak const& a, peak const& b) {
+        return a.area > b.area;
+    }
+};
+
 std::string RKDFilter::getName() const
 {
     return s_info.name;
@@ -110,8 +121,8 @@ PointViewSet RKDFilter::run(PointViewPtr view)
     // All my vectors are out here b/c I thought there may be some savings in just allocating them once, and resizing, resetting as needed in the loops. Not sure it made that much of a difference...
     VectorXd MAPCPNeighbors = VectorXd::Zero(n);
     VectorXd density = VectorXd::Zero(n);
-    VectorXd x_vals, y_vals, z_vals;
-    VectorXd x_diff, y_diff, z_diff, temp;
+    // VectorXd x_vals, y_vals/*, z_vals*/;
+    // VectorXd x_diff, y_diff/*, z_diff, temp*/;
     VectorXd vals = VectorXd::Zero(n-2);
     VectorXd peaks = VectorXd::Zero(n-2);
     VectorXd area = VectorXd::Zero(n-2);
@@ -136,41 +147,111 @@ PointViewSet RKDFilter::run(PointViewPtr view)
             PointIdVec neighbors = kd2.radius(x, y, m_radius);
 
             // Record values from each of the neighbors.
-            x_vals.resize(neighbors.size());
-            y_vals.resize(neighbors.size());
-            z_vals.resize(neighbors.size());
+            // x_vals.resize(neighbors.size());
+            // y_vals.resize(neighbors.size());
+            // z_vals.resize(neighbors.size());
+            ArrayXf x_vals(neighbors.size());
+            ArrayXf y_vals(neighbors.size());
+            ArrayXf z_vals(neighbors.size());
+            
+            // long long n_x, n_y, n_z;
+            // double M1_x, M1_y, M1_z;
+            // double M2_x, M2_y, M2_z;
+            // n_x = n_y = n_z = 0;
+            // M1_x = M1_y = M1_z = 0.0;
+            // M2_x = M2_y = M2_z = 0.0;
+
             for (PointId idx = 0; idx < neighbors.size(); ++idx)
             {
                 x_vals(idx) = view->getFieldAs<double>(Id::X, neighbors[idx]);
                 y_vals(idx) = view->getFieldAs<double>(Id::Y, neighbors[idx]);
                 z_vals(idx) = view->getFieldAs<double>(Id::Z, neighbors[idx]);
+                
+                // double delta_x, delta_x_n, delta_y, delta_y_n, delta_z, delta_z_n;
+                // double term1_x, term1_y, term1_z;
+                // long long n1_x = n_x;
+                // long long n1_y = n_y;
+                // long long n1_z = n_z;
+                // 
+                // n_x++;
+                // n_y++;
+                // n_z++;
+                // 
+                // delta_x = x_vals(idx) - M1_x;
+                // delta_x_n = delta_x / n_x;
+                // term1_x = delta_x * delta_x_n * n1_x;
+                // M1_x += delta_x_n;
+                // M2_x += term1_x;
+                // 
+                // delta_y = y_vals(idx) - M1_y;
+                // delta_y_n = delta_y / n_y;
+                // term1_y = delta_y * delta_y_n * n1_y;
+                // M1_y += delta_y_n;
+                // M2_y += term1_y;
+                // 
+                // delta_z = z_vals(idx) - M1_z;
+                // delta_z_n = delta_z / n_z;
+                // term1_z = delta_z * delta_z_n * n1_z;
+                // M1_z += delta_z_n;
+                // M2_z += term1_z;
             }
 
-            x_diff.resize(neighbors.size());
-            y_diff.resize(neighbors.size());
-            z_diff.resize(neighbors.size());
-            temp.resize(neighbors.size());
+            // x_diff.resize(neighbors.size());
+            // y_diff.resize(neighbors.size());
+            // z_diff.resize(neighbors.size());
+            // temp.resize(neighbors.size());
+            
+            // std::cerr << std::fixed << std::setprecision(8);
+            // std::cerr << "X: " << x_vals.transpose() << std::endl;
+            // std::cerr << "Y: " << y_vals.transpose() << std::endl;
+            // std::cerr << "Z: " << z_vals.transpose() << std::endl;
+            
+            // double h_x = std::sqrt(M2_x / (neighbors.size()-1.0)) * 2.34 * std::pow(neighbors.size(), -1.0/5.0);
+            // double h_y = std::sqrt(M2_y / (neighbors.size()-1.0)) * 2.34 * std::pow(neighbors.size(), -1.0/5.0);
+            // double h_z = std::sqrt(M2_z / (neighbors.size()-1.0)) * 2.34 * std::pow(neighbors.size(), -1.0/5.0);
+            double h_x, h_y, h_z;
+            h_x = h_y = 0.15 * 2.34 * std::pow(neighbors.size(), -1.0/5.0);
+            h_z = 0.3 * 2.34 * std::pow(neighbors.size(), -1.0/5.0);
+            // std::cerr << h_x << "\t" << h_y << "\t" << h_z << std::endl;
 
             // Sample density for the current column.
-            double invbw = 1 / m_bw;
-            const double pi = 3.141592653589793;
-            double invdenom = 1 / std::sqrt(2 * pi);
-            double invdenom2 = 1 / (temp.size() * m_bw);
+            // double invbw = 1 / m_bw;
+            double factor = 0.75 / (neighbors.size() * h_x * h_y * h_z);
+            
+            ArrayXf x_diff = x_vals - x;
+            x_diff /= h_x;
+            ArrayXf xx = 1 - x_diff.cwiseProduct(x_diff);
+            xx = (x_diff.array().abs() > 1).select(0, xx);
+            
+            ArrayXf y_diff = y_vals - y;
+            y_diff /= h_y;
+            ArrayXf yy = 1 - y_diff.cwiseProduct(y_diff);
+            yy = (y_diff.array().abs() > 1).select(0, yy);
+            
+            ArrayXf xyprod = xx * yy;
+            
             for (size_t i = 0; i < samples.size(); ++i)
-            {
-                x_diff = x_vals - VectorXd::Constant(x_vals.size(), x);
-                y_diff = y_vals - VectorXd::Constant(y_vals.size(), y);
-                z_diff = z_vals - VectorXd::Constant(z_vals.size(), samples(i));
-                x_diff = x_diff.cwiseProduct(x_diff);
-                y_diff = y_diff.cwiseProduct(y_diff);
-                z_diff = z_diff.cwiseProduct(z_diff);
-                temp = (x_diff + y_diff + z_diff).cwiseSqrt() * invbw;
-                temp = temp.cwiseProduct(temp) * -0.5;
-                temp = temp.array().exp().matrix() * invdenom;
-                density(i) = temp.sum() * invdenom2;
+            {                
+                ArrayXf z_diff = z_vals - samples(i);
+                z_diff /= h_z;
+                ArrayXf zz = 1 - z_diff * z_diff;
+                zz = (z_diff.abs() > 1).select(0, zz);
+                
+                // if ((z_diff.array() > 1).count())
+                    // std::cerr << zz.transpose() << std::endl;
+                
+                // std::cerr << (x_diff.array() > 1.0).count() << "\t"
+                //           << (y_diff.array() > 1.0).count() << "\t"
+                //           << (z_diff.array() > 1.0).count() << "\t"
+                //           << std::endl;
+                
+                // temp = xx.cwiseProduct(yy);
+                ArrayXf temp = xyprod * zz;
+                // std::cerr << xx.size() << "\t" << yy.size() << "\t" << zz.size() << "\t" << temp.size() << std::endl;
+                density(i) = factor * temp.sum();
             }
             // how critical is it to normalize this in some way? it does affect the peak area, the overall area, and therefor the intensity and reflectance
-            // density /= density.sum();
+            density /= density.sum();
             // std::cerr << density.sum() << "\t" << density.norm() << "\t" << density.maxCoeff() << std::endl;
             // std::cerr << density.sum() << std::endl;
             // density.normalize();
@@ -217,13 +298,15 @@ PointViewSet RKDFilter::run(PointViewPtr view)
             int nPeaks = 0;
             int nrad = 3;
             double rad = (2*nrad+1)*m_hres/2;
+            double totPeakArea = 0.0;
+            std::vector<peak> pvec;
             for (int i = 0; i < samples.size()-2; ++i)
             {
                 if (diff2(i) == -2)
                 {
-                    int nei = kd3.radius(x, y, samples(i), rad).size();
-                    if (nei < 3)
-                        continue;
+                    // int nei = kd3.radius(x, y, samples(i), rad).size();
+                    // if (nei < 3)
+                    //     continue;
                         
                     double peakArea = density(i);
                     for (int j = i+1; j < samples.size()-2; ++j)
@@ -241,23 +324,28 @@ PointViewSet RKDFilter::run(PointViewPtr view)
                     // if (peakArea * invdensitysum < 0.1)
                     //     continue;
 
-                    vals(nPeaks) = density(i);
+                    // vals(nPeaks) = density(i);
                     // vals(nPeaks) = nei;  // experiment, write number of neighbors out to density channel
-                    peaks(nPeaks) = samples(i);
-                    area(nPeaks) = peakArea;
-                    areaFrac(nPeaks) = peakArea * invdensitysum;
+                    // peaks(nPeaks) = samples(i);
+                    // area(nPeaks) = peakArea;
+                    // areaFrac(nPeaks) = peakArea * invdensitysum;
+                    
+                    // totPeakArea += peakArea;
+                    pvec.push_back(peak{samples(i), peakArea});
 
                     nPeaks++;
                 }
             }
+            
+            std::sort(pvec.begin(), pvec.end(), by_area());
 
             if (nPeaks == 0)
                 continue;
 
-            vals.conservativeResize(nPeaks);
-            peaks.conservativeResize(nPeaks);
-            area.conservativeResize(nPeaks);
-            areaFrac.conservativeResize(nPeaks);
+            // vals.conservativeResize(nPeaks);
+            // peaks.conservativeResize(nPeaks);
+            // area.conservativeResize(nPeaks);
+            // areaFrac.conservativeResize(nPeaks);
             
             // std::cerr << vals.transpose() << std::endl;
             // std::cerr << peaks.transpose() << std::endl;
@@ -266,21 +354,32 @@ PointViewSet RKDFilter::run(PointViewPtr view)
             // std::cerr << areaFrac.transpose() << std::endl;
 
             // vals /= vals.sum();
-            double maxval = vals.maxCoeff();
+            // double maxval = vals.maxCoeff();
+            // double peakAreaAdded = 0.0;
 
             // For each peak of sufficient size/strength, find the nearest
             // neighbor in the raw data and append to the output view.
-            for (int i = 0; i < nPeaks; ++i)
+            // for (int i = 0; i < nPeaks; ++i)
+            // int np = 0;
+            for (auto const& p : pvec)
             {
-                if (vals(i) < maxval)
-                    continue;
+                if (p.area < 0.1)
+                    break;
+                // if (++np > 2)
+                //     continue;
+                // if (peakAreaAdded > (0.8 * totPeakArea))
+                //     continue;
                     
-                PointIdVec idx = kd3.neighbors(x, y, peaks(i), 1);
-                view->setField(m_rangeDensity, idx[0], vals(i));
-                view->setField(Id::NumberOfReturns, idx[0], nPeaks);
-                view->setField(Id::ReturnNumber, idx[0], nPeaks-i);
-                view->setField(Id::Amplitude, idx[0], area(i));
-                view->setField(Id::Reflectance, idx[0], areaFrac(i));
+                // peakAreaAdded += p.area;
+                // if (vals(i) < maxval)
+                //     continue;
+                    
+                PointIdVec idx = kd3.neighbors(x, y, p.loc, 1);
+                // view->setField(m_rangeDensity, idx[0], vals(i));
+                // view->setField(Id::NumberOfReturns, idx[0], nPeaks);
+                // view->setField(Id::ReturnNumber, idx[0], nPeaks-i);
+                view->setField(Id::Amplitude, idx[0], p.area);
+                // view->setField(Id::Reflectance, idx[0], areaFrac(i));
                 output->appendPoint(*view, idx[0]);
                 /*
                 PointIdVec idx = kd3.radius(x, y, peaks(i), m_hres);
