@@ -64,7 +64,7 @@ public:
 private:
     Dimension::Id m_rangeDensity;
     double m_bw, m_hres, m_vres, m_radius;
-    
+
     virtual void addArgs(ProgramArgs& args);
     virtual void addDimensions(PointLayoutPtr layout);
     virtual PointViewSet run(PointViewPtr in);

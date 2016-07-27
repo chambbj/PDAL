@@ -51,13 +51,16 @@ static PluginInfo const s_info =
 
 CREATE_STATIC_PLUGIN(1, 0, RKDFilter, Filter, s_info)
 
-struct peak {
+struct peak
+{
     double loc;
     double area;
 };
 
-struct by_area {
-    bool operator()(peak const& a, peak const& b) {
+struct by_area
+{
+    bool operator()(peak const& a, peak const& b)
+    {
         return a.area > b.area;
     }
 };
@@ -111,7 +114,7 @@ PointViewSet RKDFilter::run(PointViewPtr view)
     log()->get(LogLevel::Debug) << "# samples = " << n << std::endl;
     log()->get(LogLevel::Debug) << "# rows = " << rows << std::endl;
     log()->get(LogLevel::Debug) << "# cols = " << cols << std::endl;
-    
+
     // Considering not having this be a user-defined parameter, rather hold it
     // constant at 1.5 (equivalent to 1 bin in X and Y).
     m_radius = 1.5 * m_hres;
@@ -137,40 +140,40 @@ PointViewSet RKDFilter::run(PointViewPtr view)
             ArrayXf x_vals(neighbors.size());
             ArrayXf y_vals(neighbors.size());
             ArrayXf z_vals(neighbors.size());
-            
+
             for (PointId idx = 0; idx < neighbors.size(); ++idx)
             {
                 x_vals(idx) = view->getFieldAs<double>(Id::X, neighbors[idx]);
                 y_vals(idx) = view->getFieldAs<double>(Id::Y, neighbors[idx]);
                 z_vals(idx) = view->getFieldAs<double>(Id::Z, neighbors[idx]);
             }
-            
+
             double h_x, h_y, h_z;
             h_x = h_y = 0.15 * 2.34 * std::pow(neighbors.size(), -1.0/5.0);
             h_z = 0.3 * 2.34 * std::pow(neighbors.size(), -1.0/5.0);
 
             // Sample density for the current column.
             double factor = 0.75 / (neighbors.size() * h_x * h_y * h_z);
-            
+
             ArrayXf x_diff = x_vals - x;
             x_diff /= h_x;
             ArrayXf xx = 1 - x_diff * x_diff;
             xx = (x_diff.abs() > 1).select(0, xx);
-            
+
             ArrayXf y_diff = y_vals - y;
             y_diff /= h_y;
             ArrayXf yy = 1 - y_diff * y_diff;
             yy = (y_diff.abs() > 1).select(0, yy);
-            
+
             ArrayXf xyprod = xx * yy;
-            
+
             for (auto i = 0; i < samples.size(); ++i)
-            {                
+            {
                 ArrayXf z_diff = z_vals - samples(i);
                 z_diff /= h_z;
                 ArrayXf zz = 1 - z_diff * z_diff;
                 zz = (z_diff.abs() > 1).select(0, zz);
-                
+
                 density(i) = factor * (xyprod * zz).sum();
             }
             density /= density.sum();
@@ -184,7 +187,8 @@ PointViewSet RKDFilter::run(PointViewPtr view)
             VectorXd diff = diffEq(density);
 
             // MATLAB sign function
-            VectorXd sign = diff.unaryExpr([](double x) {
+            VectorXd sign = diff.unaryExpr([](double x)
+            {
                 if (x < 0)
                     return -1;
                 else if (x > 0)
@@ -195,7 +199,7 @@ PointViewSet RKDFilter::run(PointViewPtr view)
 
             // MATLAB diff command again - approxiate derivative
             VectorXd diff2 = diffEq(sign);
-            
+
             // Peaks occur at diff2 == -2
             int nPeaks = 0;
             std::vector<peak> pvec;
@@ -221,7 +225,7 @@ PointViewSet RKDFilter::run(PointViewPtr view)
                     nPeaks++;
                 }
             }
-            
+
             std::sort(pvec.begin(), pvec.end(), by_area());
 
             if (nPeaks == 0)
@@ -233,7 +237,7 @@ PointViewSet RKDFilter::run(PointViewPtr view)
             {
                 if (p.area < 0.1)
                     break;
-                    
+
                 std::vector<PointId> idx = kd3.neighbors(x, y, p.loc, 1);
                 view->setField(Id::Amplitude, idx[0], p.area);
                 output->appendPoint(*view, idx[0]);
