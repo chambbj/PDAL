@@ -196,7 +196,7 @@ PointViewSet RKDFilter::run(PointViewPtr view)
             VectorXd diff = diffEq(density);
 
             // MATLAB sign function
-            VectorXd sign = diff.unaryExpr([](double x)
+            auto signFcn = [](double x)
             {
                 if (x < 0)
                     return -1;
@@ -204,7 +204,8 @@ PointViewSet RKDFilter::run(PointViewPtr view)
                     return 1;
                 else
                     return 0;
-            });
+            };
+            VectorXd sign = diff.unaryExpr(std::ref(signFcn));
 
             // MATLAB diff command again - approxiate derivative
             VectorXd diff2 = diffEq(sign);
