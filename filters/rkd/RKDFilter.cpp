@@ -182,20 +182,9 @@ PointViewSet RKDFilter::run(PointViewPtr view)
             for (auto i = 0; i < samples.size(); ++i)
             {
                 z_diff = (z_vals - samples(i)) / h_z;
-                density(i) = factor * (xyprod * (z_diff).unaryExpr([](float x)
-                {
-                    if (std::abs(x) > 1)
-                        return 0.0f;
-                    else
-                        return 1.0f - x * x;
-                })).sum();
+                density(i) = factor * (xyprod * (z_diff).unaryExpr(applyK)).sum();
             }
             density /= density.sum();
-
-            // auto diffEq = [](VectorXf const& vec)
-            // {
-            //     return vec.tail(vec.size()-1)-vec.head(vec.size()-1);
-            // };
 
             // MATLAB diff command - approximate derivative
             VectorXf diff = diffEq(density);
