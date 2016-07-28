@@ -120,7 +120,6 @@ PointViewSet RKDFilter::run(PointViewPtr view)
     m_radius = 1.5 * m_hres;
 
     VectorXd density = VectorXd::Zero(n);
-    // ArrayXf x_diff, xx, y_diff, yy, z_diff, zz, xyprod;
     ArrayXf z_diff, xyprod;
 
     // Initialize the samples.
@@ -137,8 +136,8 @@ PointViewSet RKDFilter::run(PointViewPtr view)
 
             // Find neighbors in raw cloud at current XY cell.
             std::vector<PointId> neighbors = kd2.radius(x + bounds.minx,
-                                                        y + bounds.miny,
-                                                        m_radius);
+                                             y + bounds.miny,
+                                             m_radius);
 
             // Record values from each of the neighbors.
             ArrayXf x_vals(neighbors.size());
@@ -151,7 +150,7 @@ PointViewSet RKDFilter::run(PointViewPtr view)
                 y_vals(idx) = view->getFieldAs<double>(Id::Y, neighbors[idx]) - bounds.miny;
                 z_vals(idx) = view->getFieldAs<double>(Id::Z, neighbors[idx]) - bounds.minz;
             }
-            
+
             auto setBandwidth = [](double std, int n)
             {
                 return std * 2.34 * std::pow(n, -0.2);
@@ -164,11 +163,6 @@ PointViewSet RKDFilter::run(PointViewPtr view)
             // Sample density for the current column.
             double factor = 0.75 / (neighbors.size() * h_x * h_y * h_z);
 
-            // auto applyKernel = [](ArrayXf u)
-            // {
-            //     return (u.abs() > 1).select(0, 1 - u * u);
-            // };
-            
             auto applyK = [](float x)
             {
                 if (std::abs(x) > 1)
@@ -183,7 +177,7 @@ PointViewSet RKDFilter::run(PointViewPtr view)
             for (auto i = 0; i < samples.size(); ++i)
             {
                 z_diff = (z_vals - samples(i)) / h_z;
-                density(i) = factor*(xyprod * (z_diff).unaryExpr([](float x)
+                density(i) = factor * (xyprod * (z_diff).unaryExpr([](float x)
                 {
                     if (std::abs(x) > 1)
                         return 0.0f;
@@ -191,7 +185,6 @@ PointViewSet RKDFilter::run(PointViewPtr view)
                         return 1.0f - x * x;
                 })).sum();
             }
-            // density *= factor;
             density /= density.sum();
 
             auto diffEq = [](VectorXd vec)
@@ -255,9 +248,9 @@ PointViewSet RKDFilter::run(PointViewPtr view)
                     break;
 
                 std::vector<PointId> idx = kd3.neighbors(x + bounds.minx,
-                                                         y + bounds.miny,
-                                                         p.loc + bounds.minz,
-                                                         1);
+                                           y + bounds.miny,
+                                           p.loc + bounds.minz,
+                                           1);
                 view->setField(Id::Amplitude, idx[0], p.area);
                 output->appendPoint(*view, idx[0]);
             }
