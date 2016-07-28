@@ -67,7 +67,7 @@ private:
     Dimension::Id m_rangeDensity;
     double m_bw, m_hres, m_vres, m_radius;
 
-    Eigen::VectorXf diffEq(Eigen::VectorXf const& vec);
+    Eigen::VectorXf diffEq(const Eigen::Ref<const Eigen::VectorXf> vec);
     virtual void addArgs(ProgramArgs& args);
     virtual void addDimensions(PointLayoutPtr layout);
     virtual PointViewSet run(PointViewPtr in);

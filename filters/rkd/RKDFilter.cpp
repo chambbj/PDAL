@@ -65,7 +65,7 @@ struct by_area
     }
 };
 
-Eigen::VectorXf RKDFilter::diffEq(Eigen::VectorXf const& vec)
+Eigen::VectorXf RKDFilter::diffEq(const Eigen::Ref<const Eigen::VectorXf> vec)
 {
     return vec.tail(vec.size()-1)-vec.head(vec.size()-1);
 }
