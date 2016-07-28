@@ -119,7 +119,7 @@ PointViewSet RKDFilter::run(PointViewPtr view)
     // constant at 1.5 (equivalent to 1 bin in X and Y).
     m_radius = 1.5 * m_hres;
 
-    VectorXd density = VectorXd::Zero(n);
+    VectorXf density = VectorXf::Zero(n);
     ArrayXf z_diff, xyprod;
 
     // Initialize the samples.
@@ -151,17 +151,17 @@ PointViewSet RKDFilter::run(PointViewPtr view)
                 z_vals(idx) = view->getFieldAs<double>(Id::Z, neighbors[idx]) - bounds.minz;
             }
 
-            auto setBandwidth = [](double std, int n)
+            auto setBandwidth = [](float std, int n)
             {
-                return std * 2.34 * std::pow(n, -0.2);
+                return std * 2.34f * std::pow(n, -0.2f);
             };
 
-            double h_x = setBandwidth(0.15, neighbors.size());
-            double h_y = setBandwidth(0.15, neighbors.size());
-            double h_z = setBandwidth(0.30, neighbors.size());
+            float h_x = setBandwidth(0.15f, neighbors.size());
+            float h_y = setBandwidth(0.15f, neighbors.size());
+            float h_z = setBandwidth(0.30f, neighbors.size());
 
             // Sample density for the current column.
-            double factor = 0.75 / (neighbors.size() * h_x * h_y * h_z);
+            float factor = 0.75f / (neighbors.size() * h_x * h_y * h_z);
 
             auto applyK = [](float x)
             {
@@ -187,28 +187,28 @@ PointViewSet RKDFilter::run(PointViewPtr view)
             }
             density /= density.sum();
 
-            auto diffEq = [](VectorXd vec)
+            auto diffEq = [](VectorXf vec)
             {
                 return vec.tail(vec.size()-1)-vec.head(vec.size()-1);
             };
 
             // MATLAB diff command - approximate derivative
-            VectorXd diff = diffEq(density);
+            VectorXf diff = diffEq(density);
 
             // MATLAB sign function
-            auto signFcn = [](double x)
+            auto signFcn = [](float x)
             {
-                if (x < 0)
-                    return -1;
-                else if (x > 0)
-                    return 1;
+                if (x < 0.0f)
+                    return -1.0f;
+                else if (x > 0.0f)
+                    return 1.0f;
                 else
-                    return 0;
+                    return 0.0f;
             };
-            VectorXd sign = diff.unaryExpr(std::ref(signFcn));
+            VectorXf sign = diff.unaryExpr(std::ref(signFcn));
 
             // MATLAB diff command again - approxiate derivative
-            VectorXd diff2 = diffEq(sign);
+            VectorXf diff2 = diffEq(sign);
 
             // Peaks occur at diff2 == -2
             int nPeaks = 0;
