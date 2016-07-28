@@ -187,7 +187,7 @@ PointViewSet RKDFilter::run(PointViewPtr view)
             density /= density.sum();
 
             // MATLAB diff command - approximate derivative
-            VectorXf diff = diffEq(density);
+            // VectorXf diff = diffEq(density);
 
             // MATLAB sign function
             auto signFcn = [](float x)
@@ -199,10 +199,10 @@ PointViewSet RKDFilter::run(PointViewPtr view)
                 else
                     return 0.0f;
             };
-            VectorXf sign = diff.unaryExpr(std::ref(signFcn));
+            // VectorXf sign = diffEq(density).unaryExpr(std::ref(signFcn));
 
             // MATLAB diff command again - approxiate derivative
-            VectorXf diff2 = diffEq(sign);
+            VectorXf diff2 = diffEq(diffEq(density).unaryExpr(std::ref(signFcn)));
 
             // Peaks occur at diff2 == -2
             int nPeaks = 0;
