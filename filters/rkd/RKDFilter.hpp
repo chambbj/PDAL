@@ -37,6 +37,8 @@
 #include <pdal/Filter.hpp>
 #include <pdal/plugin.hpp>
 
+#include <Eigen/Dense>
+
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -65,6 +67,7 @@ private:
     Dimension::Id m_rangeDensity;
     double m_bw, m_hres, m_vres, m_radius;
 
+    Eigen::VectorXf diffEq(Eigen::VectorXf const& vec);
     virtual void addArgs(ProgramArgs& args);
     virtual void addDimensions(PointLayoutPtr layout);
     virtual PointViewSet run(PointViewPtr in);

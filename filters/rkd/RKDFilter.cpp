@@ -65,6 +65,11 @@ struct by_area
     }
 };
 
+Eigen::VectorXf RKDFilter::diffEq(Eigen::VectorXf const& vec)
+{
+    return vec.tail(vec.size()-1)-vec.head(vec.size()-1);
+}
+
 std::string RKDFilter::getName() const
 {
     return s_info.name;
@@ -187,10 +192,10 @@ PointViewSet RKDFilter::run(PointViewPtr view)
             }
             density /= density.sum();
 
-            auto diffEq = [](VectorXf vec)
-            {
-                return vec.tail(vec.size()-1)-vec.head(vec.size()-1);
-            };
+            // auto diffEq = [](VectorXf const& vec)
+            // {
+            //     return vec.tail(vec.size()-1)-vec.head(vec.size()-1);
+            // };
 
             // MATLAB diff command - approximate derivative
             VectorXf diff = diffEq(density);
