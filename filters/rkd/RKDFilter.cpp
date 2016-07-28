@@ -153,45 +153,26 @@ PointViewSet RKDFilter::run(PointViewPtr view)
             {
                 return std * 2.34 * std::pow(n, -0.2);
             };
-            
+
             double h_x = setBandwidth(0.15, neighbors.size());
             double h_y = setBandwidth(0.15, neighbors.size());
             double h_z = setBandwidth(0.30, neighbors.size());
-            // double h_y = h_x;
-            // double h_z = 2*h_x;
 
             // Sample density for the current column.
             double factor = 0.75 / (neighbors.size() * h_x * h_y * h_z);
-            
+
             auto applyKernel = [](ArrayXd u)
             {
-                // ArrayXd diff = (vals - val) / bw;
-                // ArrayXd foo = 1 - diff * diff;
-                // return (diff.abs() > 1).select(0, foo);
                 return (u.abs() > 1).select(0, 1 - u * u);
             };
 
             x_diff = (x_vals - x) / h_x;
-            // x_diff /= h_x;
-            // xx = 1 - x_diff * x_diff;
-            // xx = (x_diff.abs() > 1).select(0, xx);
-            // ArrayXd xx = applyKernel(x_diff);
-
             y_diff = (y_vals - y) / h_y;
-            // y_diff /= h_y;
-            // yy = 1 - y_diff * y_diff;
-            // yy = (y_diff.abs() > 1).select(0, yy);
-            // ArrayXd yy = applyKernel(y_diff);
-
-            // xyprod = xx * yy;
             xyprod = applyKernel(x_diff) * applyKernel(y_diff);
 
             for (auto i = 0; i < samples.size(); ++i)
             {
                 z_diff = (z_vals - samples(i)) / h_z;
-                // z_diff /= h_z;
-                // zz = 1 - z_diff * z_diff;
-                // zz = (z_diff.abs() > 1).select(0, zz);
                 ArrayXd zz = applyKernel(z_diff);
 
                 density(i) = factor * (xyprod * zz).sum();
