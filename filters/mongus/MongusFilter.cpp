@@ -420,12 +420,12 @@ std::vector<PointId> MongusFilter::processGround(PointViewPtr view)
     // In our case, 2D structural elements of circular shape are employed and
     // sufficient accuracy is achieved by using a larger window size for opening
     // (W11) than for closing (W9).
-    auto mo = matrixOpen(cz, 11);
+    MatrixXd mo = matrixOpen(cz, 11);
     writeControl(cx, cy, mo, "opened.laz");
-    auto mc = matrixClose(mo, 9);
+    MatrixXd mc = matrixClose(mo, 9);
     writeControl(cx, cy, mc, "closed.laz");
     
-    // auto messing = TPS(cx, cy, mc, m_cellSize);
+    // MatrixXd messing = TPS(cx, cy, mc, m_cellSize);
     // writeMatrix(messing, "messing.tif", m_cellSize, view);
 
     point_count_t num_low(0);
@@ -443,7 +443,7 @@ std::vector<PointId> MongusFilter::processGround(PointViewPtr view)
     //     int c = clamp(getColIndex(x, m_cellSize), 0, m_numCols-1);
     //     int r = clamp(getRowIndex(y, m_cellSize), 0, m_numRows-1);
     // 
-    //     auto diff = mc(r, c) - z;
+    //     MatrixXd diff = mc(r, c) - z;
     // 
     //     if (diff >= 1.0)
     //     {
@@ -473,7 +473,7 @@ std::vector<PointId> MongusFilter::processGround(PointViewPtr view)
     writeControl(dcx, dcy, dcz, "temp.laz");
 
     // compute TPS at max_level
-    auto surface = TPS(dcx, dcy, dcz, newCellSize);
+    MatrixXd surface = TPS(dcx, dcy, dcz, newCellSize);
     writeMatrix(surface, "temp.tif", newCellSize, view);
 
     MatrixXd t;
@@ -492,13 +492,13 @@ std::vector<PointId> MongusFilter::processGround(PointViewPtr view)
         std::string name3(buf3);
         writeControl(dcx, dcy, dcz, name3);
 
-        auto R = computeResidual(dcz, surface);
+        MatrixXd R = computeResidual(dcz, surface);
         char rbuf[256];
         sprintf(rbuf, "R%d.tif", l);
         std::string rbufn(rbuf);
         writeMatrix(R, rbufn, newCellSize, view);
         
-        auto maxZ = matrixOpen(R, 2*l);
+        MatrixXd maxZ = matrixOpen(R, 2*l);
         char obuf[256];
         sprintf(obuf, "open%d.tif", l);
         std::string obufn(obuf);
@@ -531,7 +531,7 @@ std::vector<PointId> MongusFilter::processGround(PointViewPtr view)
                   int cc = std::floor(c/2);
                   int rs = newCellSize * r;
                   int cs = newCellSize * c;
-                  auto block = cz.block(rs, cs, newCellSize, newCellSize);
+                  MatrixXd block = cz.block(rs, cs, newCellSize, newCellSize);
                   MatrixXd::Index ri, ci;
                   block.minCoeff(&ri, &ci);
                   // std::cerr << block << std::endl;
@@ -565,8 +565,8 @@ std::vector<PointId> MongusFilter::processGround(PointViewPtr view)
 
 
     // one last residual with original control points and final TPS surface?
-    // auto R = cz - surface;
-    // auto maxZ = matrixOpen(R, 4);
+    // MatrixXd R = cz - surface;
+    // MatrixXd maxZ = matrixOpen(R, 4);
     // MatrixXd T = R - maxZ;
     // t = computeThresholds(T, 4);
 
@@ -684,7 +684,7 @@ Eigen::MatrixXd MongusFilter::matrixOpen(Eigen::MatrixXd data, int radius)
 {
     using namespace Eigen;
     
-    auto data2 = padMatrix(data, radius);
+    MatrixXd data2 = padMatrix(data, radius);
 
     int nrows = data2.rows();
     int ncols = data2.cols();
@@ -745,7 +745,7 @@ Eigen::MatrixXd MongusFilter::matrixClose(Eigen::MatrixXd data, int radius)
 {
     using namespace Eigen;
     
-    auto data2 = padMatrix(data, radius);
+    MatrixXd data2 = padMatrix(data, radius);
 
     int nrows = data2.rows();
     int ncols = data2.cols();
@@ -848,7 +848,7 @@ PointViewSet MongusFilter::run(PointViewPtr view)
         log()->floatPrecision(8);
     log()->get(LogLevel::Debug2) << "Process MongusFilter...\n";
 
-    auto idx = processGround(view);
+    std::vector<PointId> idx = processGround(view);
     std::cerr << idx.size() << std::endl;
 
     PointViewSet viewSet;
