@@ -590,8 +590,6 @@ std::vector<PointId> MongusFilter::processGround(PointViewPtr view)
         if (res < t(r, c))
             groundIdx.push_back(i);
     }
-    std::cerr << "done\n";
-    std::cerr << groundIdx.size() << std::endl;
 
     return groundIdx;
 }
@@ -604,7 +602,7 @@ void MongusFilter::downsampleMin(Eigen::MatrixXd *cx, Eigen::MatrixXd *cy,
     int nr = ceil(cz->rows() / cell_size);
     int nc = ceil(cz->cols() / cell_size);
 
-    std::cerr << nr << "\t" << nc << "\t" << cell_size << std::endl;
+    // std::cerr << nr << "\t" << nc << "\t" << cell_size << std::endl;
 
     dcx->resize(nr, nc);
     dcx->setConstant(std::numeric_limits<double>::quiet_NaN());
