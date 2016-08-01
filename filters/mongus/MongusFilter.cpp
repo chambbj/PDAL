@@ -417,7 +417,7 @@ std::vector<PointId> MongusFilter::processGround(PointViewPtr view)
             cz(r, c) = z;
         }
     }
-    
+
     // writeControl(cx, cy, cz, "minZ.laz");
 
     // In our case, 2D structural elements of circular shape are employed and
@@ -427,7 +427,7 @@ std::vector<PointId> MongusFilter::processGround(PointViewPtr view)
     // writeControl(cx, cy, mo, "opened.laz");
     MatrixXd mc = matrixClose(mo, 9);
     writeControl(cx, cy, mc, "closed.laz");
-    
+
     // MatrixXd messing = TPS(cx, cy, mc, m_cellSize);
     // writeMatrix(messing, "messing.tif", m_cellSize, view);
 
@@ -442,12 +442,12 @@ std::vector<PointId> MongusFilter::processGround(PointViewPtr view)
     //     double x = view->getFieldAs<double>(X, i);
     //     double y = view->getFieldAs<double>(Y, i);
     //     double z = view->getFieldAs<double>(Z, i);
-    // 
+    //
     //     int c = clamp(getColIndex(x, m_cellSize), 0, m_numCols-1);
     //     int r = clamp(getRowIndex(y, m_cellSize), 0, m_numRows-1);
-    // 
+    //
     //     MatrixXd diff = mc(r, c) - z;
-    // 
+    //
     //     if (diff >= 1.0)
     //     {
     //         view->setField(Dimension::Id::Z, i, mc(r, c));
@@ -456,15 +456,15 @@ std::vector<PointId> MongusFilter::processGround(PointViewPtr view)
     // }
     for (int i = 0; i < cz.size(); ++i)
     {
-      double diff = mc(i) - cz(i);
-      if (diff >= 1.0)
-      {
-          cz(i) = mc(i);
-          num_low++;
-      }
+        double diff = mc(i) - cz(i);
+        if (diff >= 1.0)
+        {
+            cz(i) = mc(i);
+            num_low++;
+        }
     }
     std::cerr << num_low << " low points replaced\n";
-    
+
     // writeControl(cx, cy, cz, "newControl.laz");
 
     // downsample control at max_level
@@ -487,7 +487,7 @@ std::vector<PointId> MongusFilter::processGround(PointViewPtr view)
     for (int l = level-1; l > 0; --l)
     {
         std::cerr << "Level " << l << std::endl;
-        
+
         // compute TPS with update control at level
 
         // The interpolated surface is estimated based on the filtered set of
@@ -503,7 +503,7 @@ std::vector<PointId> MongusFilter::processGround(PointViewPtr view)
         sprintf(bufm, "master_control_%d.laz", l);
         std::string namem(bufm);
         writeControl(cx, cy, cz, namem);
-        
+
         // downsample control at level
         newCellSize = m_cellSize * std::pow(2, l-1);
         downsampleMin(&cx, &cy, &cz, &dcx, &dcy, &dcz, newCellSize);
@@ -517,19 +517,19 @@ std::vector<PointId> MongusFilter::processGround(PointViewPtr view)
         sprintf(rbuf, "residual_%d.tif", l);
         std::string rbufn(rbuf);
         writeMatrix(R, rbufn, newCellSize, view);
-        
+
         MatrixXd maxZ = matrixOpen(R, 2*l);
         char obuf[256];
         sprintf(obuf, "open_%d.tif", l);
         std::string obufn(obuf);
         writeMatrix(maxZ, obufn, newCellSize, view);
-        
+
         MatrixXd T = R - maxZ;
         char Tbuf[256];
         sprintf(Tbuf, "tophat_%d.tif", l);
         std::string Tbufn(Tbuf);
         writeMatrix(T, Tbufn, newCellSize, view);
-        
+
         t = computeThresholds(T, 2*l);
         char tbuf[256];
         sprintf(tbuf, "thresh_%d.tif", l);
@@ -547,20 +547,20 @@ std::vector<PointId> MongusFilter::processGround(PointViewPtr view)
                 // it is replaced by the interpolated point.
                 if (T(r,c) > t(r,c))
                 {
-                  int rr = std::floor(r/2);
-                  int cc = std::floor(c/2);
-                  int rs = newCellSize * r;
-                  int cs = newCellSize * c;
-                  MatrixXd block = cz.block(rs, cs, newCellSize, newCellSize);
-                  MatrixXd::Index ri, ci;
-                  block.minCoeff(&ri, &ci);
-                  // std::cerr << block << std::endl;
-                  
-                  ri += rs;
-                  ci += cs;
-                  
-                  // std::cerr << ri << "\t" << ci << "\t" << cz(ri, ci) << "\t" << rr << "\t" << cc << "\t" << surface(rr, cc) << "\t" << r << "\t" << c << "\t" << dcz(r, c) << "\t" << T(r, c) << "\t" << t(r, c) << std::endl;
-                  
+                    int rr = std::floor(r/2);
+                    int cc = std::floor(c/2);
+                    int rs = newCellSize * r;
+                    int cs = newCellSize * c;
+                    MatrixXd block = cz.block(rs, cs, newCellSize, newCellSize);
+                    MatrixXd::Index ri, ci;
+                    block.minCoeff(&ri, &ci);
+                    // std::cerr << block << std::endl;
+
+                    ri += rs;
+                    ci += cs;
+
+                    // std::cerr << ri << "\t" << ci << "\t" << cz(ri, ci) << "\t" << rr << "\t" << cc << "\t" << surface(rr, cc) << "\t" << r << "\t" << c << "\t" << dcz(r, c) << "\t" << T(r, c) << "\t" << t(r, c) << std::endl;
+
                     dcz(r, c) = surface(rr, cc);
                     cz(ri, ci) = surface(rr, cc);
                 }
@@ -571,7 +571,7 @@ std::vector<PointId> MongusFilter::processGround(PointViewPtr view)
         std::string name2(buf2);
         writeControl(dcx, dcy, dcz, name2);
     }
-    
+
     surface.resize(dcz.rows(), dcz.cols());
     surface = TPS(dcx, dcy, dcz, newCellSize);
     char buffer[256];
@@ -584,19 +584,19 @@ std::vector<PointId> MongusFilter::processGround(PointViewPtr view)
     sprintf(rbuf, "final_residual.tif");
     std::string rbufn(rbuf);
     writeMatrix(R, rbufn, newCellSize, view);
-    
+
     MatrixXd maxZ = matrixOpen(R, 2);
     char obuf[256];
     sprintf(obuf, "final_opened.tif");
     std::string obufn(obuf);
     writeMatrix(maxZ, obufn, newCellSize, view);
-    
+
     MatrixXd T = R - maxZ;
     char Tbuf[256];
     sprintf(Tbuf, "final_tophat.tif");
     std::string Tbufn(Tbuf);
     writeMatrix(T, Tbufn, newCellSize, view);
-    
+
     t = computeThresholds(T, 2);
     char tbuf[256];
     sprintf(tbuf, "final_thresh.tif");
@@ -703,26 +703,26 @@ Eigen::MatrixXd MongusFilter::computeResidual(Eigen::MatrixXd cz,
 
 Eigen::MatrixXd MongusFilter::padMatrix(Eigen::MatrixXd data, int radius)
 {
-  using namespace Eigen;
-  
-  MatrixXd data2 = MatrixXd::Zero(data.rows()+2*radius, data.cols()+2*radius);
-  data2.block(radius, radius, data.rows(), data.cols()) = data;
-  data2.block(radius, 0, data.rows(), radius) =
-      data.block(0, 0, data.rows(), radius).rowwise().reverse();
-  data2.block(radius, data.cols()+radius, data.rows(), radius) =
-      data.block(0, data.cols()-radius, data.rows(), radius).rowwise().reverse();
-  data2.block(0, 0, radius, data2.cols()) =
-      data2.block(radius, 0, radius, data2.cols()).colwise().reverse();
-  data2.block(data.rows()+radius, 0, radius, data2.cols()) =
-      data2.block(data2.rows()-radius, 0, radius, data2.cols()).colwise().reverse();
-      
-  return data2;
+    using namespace Eigen;
+
+    MatrixXd data2 = MatrixXd::Zero(data.rows()+2*radius, data.cols()+2*radius);
+    data2.block(radius, radius, data.rows(), data.cols()) = data;
+    data2.block(radius, 0, data.rows(), radius) =
+        data.block(0, 0, data.rows(), radius).rowwise().reverse();
+    data2.block(radius, data.cols()+radius, data.rows(), radius) =
+        data.block(0, data.cols()-radius, data.rows(), radius).rowwise().reverse();
+    data2.block(0, 0, radius, data2.cols()) =
+        data2.block(radius, 0, radius, data2.cols()).colwise().reverse();
+    data2.block(data.rows()+radius, 0, radius, data2.cols()) =
+        data2.block(data2.rows()-radius, 0, radius, data2.cols()).colwise().reverse();
+
+    return data2;
 }
 
 Eigen::MatrixXd MongusFilter::matrixOpen(Eigen::MatrixXd data, int radius)
 {
     using namespace Eigen;
-    
+
     MatrixXd data2 = padMatrix(data, radius);
 
     int nrows = data2.rows();
@@ -783,7 +783,7 @@ Eigen::MatrixXd MongusFilter::matrixOpen(Eigen::MatrixXd data, int radius)
 Eigen::MatrixXd MongusFilter::matrixClose(Eigen::MatrixXd data, int radius)
 {
     using namespace Eigen;
-    
+
     MatrixXd data2 = padMatrix(data, radius);
 
     int nrows = data2.rows();
