@@ -101,9 +101,9 @@ Eigen::MatrixXd MongusFilter::TPS(Eigen::MatrixXd cx, Eigen::MatrixXd cy,
 
     MatrixXd S = MatrixXd::Zero(num_rows, num_cols);
 
-    for (int outer_col = 0; outer_col < num_cols; ++outer_col)
+    for (auto outer_col = 0; outer_col < num_cols; ++outer_col)
     {
-        for (int outer_row = 0; outer_row < num_rows; ++outer_row)
+        for (auto outer_row = 0; outer_row < num_rows; ++outer_row)
         {
             // Further optimizations are achieved by estimating only the
             // interpolated surface within a local neighbourhood (e.g. a 7 x 7
@@ -126,7 +126,7 @@ Eigen::MatrixXd MongusFilter::TPS(Eigen::MatrixXd cx, Eigen::MatrixXd cy,
             MatrixXd P = MatrixXd::Zero(nsize, 3);
             MatrixXd K = MatrixXd::Zero(nsize, nsize);
 
-            for (int id = 0; id < Hn.size(); ++id)
+            for (auto id = 0; id < Hn.size(); ++id)
             {
                 double xj = Xn(id);
                 if (std::isnan(xj))
@@ -139,7 +139,7 @@ Eigen::MatrixXd MongusFilter::TPS(Eigen::MatrixXd cx, Eigen::MatrixXd cy,
                     continue;
                 T(id) = zj;
                 P.row(id) << 1, xj, yj;
-                for (int id2 = 0; id2 < Hn.size(); ++id2)
+                for (auto id2 = 0; id2 < Hn.size(); ++id2)
                 {
                     if (id == id2)
                         continue;
@@ -177,7 +177,7 @@ Eigen::MatrixXd MongusFilter::TPS(Eigen::MatrixXd cx, Eigen::MatrixXd cy,
             double zi = cz(outer_row, outer_col);
             if (zi == std::numeric_limits<double>::max())
                 continue;
-            for (int j = 0; j < nsize; ++j)
+            for (auto j = 0; j < nsize; ++j)
             {
                 double xj = Xn(j);
                 if (std::isnan(xj))
@@ -295,15 +295,15 @@ void MongusFilter::writeMatrix(Eigen::MatrixXd data, std::string filename, doubl
         int cs = 1, ce = cols - 1;
         int rs = 1, re = rows - 1;
         float *poRasterData = new float[cols*rows];
-        for (uint32_t i=0; i<cols*rows; i++)
+        for (auto i=0; i<cols*rows; i++)
         {
             poRasterData[i] = std::numeric_limits<float>::min();
         }
 
         #pragma omp parallel for
-        for (int c = cs; c < ce; ++c)
+        for (auto c = cs; c < ce; ++c)
         {
-            for (int r = rs; r < re; ++r)
+            for (auto r = rs; r < re; ++r)
             {
                 if (data(r, c) == 0.0 || std::isnan(data(r, c) || data(r, c) == std::numeric_limits<double>::max()))
                     continue;
@@ -350,7 +350,7 @@ void MongusFilter::writeControl(Eigen::MatrixXd cx, Eigen::MatrixXd cy, Eigen::M
     table.layout()->registerDim(Dimension::Id::Z);
 
     PointId i = 0;
-    for (int j = 0; j < cz.size(); ++j)
+    for (auto j = 0; j < cz.size(); ++j)
     {
         if (std::isnan(cx(j)) || std::isnan(cy(j)))
             continue;
@@ -437,6 +437,9 @@ std::vector<PointId> MongusFilter::processGround(PointViewPtr view)
     double newCellSize = m_cellSize * std::pow(2, level-1);
 
     MatrixXd dcx, dcy, dcz;
+    
+    // Top-level control samples are assumed to be ground points, no filtering
+    // is applied.
     downsampleMin(&cx, &cy, &cz, &dcx, &dcy, &dcz, newCellSize);
 
     // Point-filtering is performed iteratively at each level of the
@@ -462,9 +465,9 @@ std::vector<PointId> MongusFilter::processGround(PointViewPtr view)
 
         // the time complexity of the approach is reduced by filtering only the
         // control-points in each iteration
-        for (int c = 0; c < T.cols(); ++c)
+        for (auto c = 0; c < T.cols(); ++c)
         {
-            for (int r = 0; r < T.rows(); ++r)
+            for (auto r = 0; r < T.rows(); ++r)
             {
                 // If the TPS control-point is recognized as a non-ground point,
                 // it is replaced by the interpolated point.
@@ -572,7 +575,7 @@ std::vector<PointId> MongusFilter::processGround(PointViewPtr view)
 
     // ...the LiDAR points are filtered only at the bottom level.
     std::cerr << newCellSize << std::endl;
-    for (PointId i = 0; i < np; ++i)
+    for (auto i = 0; i < np; ++i)
     {
         using namespace Dimension::Id;
         double x = view->getFieldAs<double>(X, i);
@@ -612,9 +615,9 @@ void MongusFilter::downsampleMin(Eigen::MatrixXd *cx, Eigen::MatrixXd *cy,
     dcz->resize(nr, nc);
     dcz->setConstant(std::numeric_limits<double>::max());
 
-    for (int c = 0; c < cz->cols(); ++c)
+    for (auto c = 0; c < cz->cols(); ++c)
     {
-        for (int r = 0; r < cz->rows(); ++r)
+        for (auto r = 0; r < cz->rows(); ++r)
         {
             if ((*cz)(r, c) == std::numeric_limits<double>::max())
                 continue;
@@ -638,9 +641,9 @@ Eigen::MatrixXd MongusFilter::computeResidual(Eigen::MatrixXd cz,
     using namespace Eigen;
 
     MatrixXd R = MatrixXd::Zero(cz.rows(), cz.cols());
-    for (int c = 0; c < cz.cols(); ++c)
+    for (auto c = 0; c < cz.cols(); ++c)
     {
-        for (int r = 0; r < cz.rows(); ++r)
+        for (auto r = 0; r < cz.rows(); ++r)
         {
             if (cz(r, c) == std::numeric_limits<double>::max())
                 continue;
@@ -686,18 +689,18 @@ Eigen::MatrixXd MongusFilter::matrixOpen(Eigen::MatrixXd data, int radius)
                                        std::numeric_limits<double>::max());
     MatrixXd maxZ = MatrixXd::Constant(nrows, ncols,
                                        std::numeric_limits<double>::lowest());
-    for (int c = 0; c < ncols; ++c)
+    for (auto c = 0; c < ncols; ++c)
     {
-        for (int r = 0; r < nrows; ++r)
+        for (auto r = 0; r < nrows; ++r)
         {
             int cs = clamp(c-radius, 0, ncols-1);
             int ce = clamp(c+radius, 0, ncols-1);
             int rs = clamp(r-radius, 0, nrows-1);
             int re = clamp(r+radius, 0, nrows-1);
 
-            for (int col = cs; col <= ce; ++col)
+            for (auto col = cs; col <= ce; ++col)
             {
-                for (int row = rs; row <= re; ++row)
+                for (auto row = rs; row <= re; ++row)
                 {
                     if ((row-r)*(row-r)+(col-c)*(col-c) > radius*radius)
                         continue;
@@ -707,19 +710,18 @@ Eigen::MatrixXd MongusFilter::matrixOpen(Eigen::MatrixXd data, int radius)
             }
         }
     }
-    // std::cerr << minZ << std::endl << std::endl;
-    for (int c = 0; c < ncols; ++c)
+    for (auto c = 0; c < ncols; ++c)
     {
-        for (int r = 0; r < nrows; ++r)
+        for (auto r = 0; r < nrows; ++r)
         {
             int cs = clamp(c-radius, 0, ncols-1);
             int ce = clamp(c+radius, 0, ncols-1);
             int rs = clamp(r-radius, 0, nrows-1);
             int re = clamp(r+radius, 0, nrows-1);
 
-            for (int col = cs; col <= ce; ++col)
+            for (auto col = cs; col <= ce; ++col)
             {
-                for (int row = rs; row <= re; ++row)
+                for (auto row = rs; row <= re; ++row)
                 {
                     if ((row-r)*(row-r)+(col-c)*(col-c) > radius*radius)
                         continue;
@@ -747,18 +749,18 @@ Eigen::MatrixXd MongusFilter::matrixClose(Eigen::MatrixXd data, int radius)
                                        std::numeric_limits<double>::max());
     MatrixXd maxZ = MatrixXd::Constant(nrows, ncols,
                                        std::numeric_limits<double>::lowest());
-    for (int c = 0; c < ncols; ++c)
+    for (auto c = 0; c < ncols; ++c)
     {
-        for (int r = 0; r < nrows; ++r)
+        for (auto r = 0; r < nrows; ++r)
         {
             int cs = clamp(c-radius, 0, ncols-1);
             int ce = clamp(c+radius, 0, ncols-1);
             int rs = clamp(r-radius, 0, nrows-1);
             int re = clamp(r+radius, 0, nrows-1);
 
-            for (int col = cs; col <= ce; ++col)
+            for (auto col = cs; col <= ce; ++col)
             {
-                for (int row = rs; row <= re; ++row)
+                for (auto row = rs; row <= re; ++row)
                 {
                     if ((row-r)*(row-r)+(col-c)*(col-c) > radius*radius)
                         continue;
@@ -768,18 +770,18 @@ Eigen::MatrixXd MongusFilter::matrixClose(Eigen::MatrixXd data, int radius)
             }
         }
     }
-    for (int c = 0; c < ncols; ++c)
+    for (auto c = 0; c < ncols; ++c)
     {
-        for (int r = 0; r < nrows; ++r)
+        for (auto r = 0; r < nrows; ++r)
         {
             int cs = clamp(c-radius, 0, ncols-1);
             int ce = clamp(c+radius, 0, ncols-1);
             int rs = clamp(r-radius, 0, nrows-1);
             int re = clamp(r+radius, 0, nrows-1);
 
-            for (int col = cs; col <= ce; ++col)
+            for (auto col = cs; col <= ce; ++col)
             {
-                for (int row = rs; row <= re; ++row)
+                for (auto row = rs; row <= re; ++row)
                 {
                     if ((row-r)*(row-r)+(col-c)*(col-c) > radius*radius)
                         continue;
@@ -798,9 +800,9 @@ Eigen::MatrixXd MongusFilter::computeThresholds(Eigen::MatrixXd T, int radius)
     using namespace Eigen;
 
     MatrixXd t = MatrixXd::Zero(T.rows(), T.cols());
-    for (int c = 0; c < T.cols(); ++c)
+    for (auto c = 0; c < T.cols(); ++c)
     {
-        for (int r = 0; r < T.rows(); ++r)
+        for (auto r = 0; r < T.rows(); ++r)
         {
             double M1 = 0;
             double M2 = 0;
@@ -811,9 +813,9 @@ Eigen::MatrixXd MongusFilter::computeThresholds(Eigen::MatrixXd T, int radius)
             int rs = clamp(r-radius, 0, T.rows()-1);
             int re = clamp(r+radius, 0, T.rows()-1);
 
-            for (int col = cs; col <= ce; ++col)
+            for (auto col = cs; col <= ce; ++col)
             {
-                for (int row = rs; row <= re; ++row)
+                for (auto row = rs; row <= re; ++row)
                 {
                     if ((row-r)*(row-r)+(col-c)*(col-c) > radius*radius)
                         continue;
