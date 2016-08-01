@@ -388,7 +388,7 @@ std::vector<PointId> MongusFilter::processGround(PointViewPtr view)
         static_cast<int>(ceil((m_bounds.maxy - m_bounds.miny)/m_cellSize)) + 1;
     m_maxRow = m_bounds.miny + m_numRows * m_cellSize;
 
-    // create control points matrix at 1m cell size
+    // create control points matrix at default cell size
     MatrixXd cx(m_numRows, m_numCols);
     cx.setConstant(std::numeric_limits<double>::quiet_NaN());
 
@@ -398,7 +398,7 @@ std::vector<PointId> MongusFilter::processGround(PointViewPtr view)
     MatrixXd cz(m_numRows, m_numCols);
     cz.setConstant(std::numeric_limits<double>::max());
 
-    for (PointId i = 0; i < np; ++i)
+    for (auto i = 0; i < np; ++i)
     {
         using namespace Dimension::Id;
         double x = view->getFieldAs<double>(X, i);
@@ -421,23 +421,16 @@ std::vector<PointId> MongusFilter::processGround(PointViewPtr view)
     // (W11) than for closing (W9).
     MatrixXd mo = matrixOpen(cz, 11);
     MatrixXd mc = matrixClose(mo, 9);
-    writeControl(cx, cy, mc, "closed.laz");
-
-    point_count_t num_low(0);
 
     // ...in order to minimize the distortions caused by such filtering, the
     // output points ... are compared to C and only ci with significantly lower
     // elevation [are] replaced... In our case, d = 1.0 m was used.
-    for (int i = 0; i < cz.size(); ++i)
+    for (auto i = 0; i < cz.size(); ++i)
     {
-        double diff = mc(i) - cz(i);
-        if (diff >= 1.0)
-        {
-            cz(i) = mc(i);
-            num_low++;
-        }
+        if ((mc(i) - cz(i)) < 1.0)
+            continue;
+        cz(i) = mc(i);
     }
-    std::cerr << num_low << " low points replaced\n";
 
     // downsample control at max_level
     int level = m_l;
@@ -446,12 +439,9 @@ std::vector<PointId> MongusFilter::processGround(PointViewPtr view)
     MatrixXd dcx, dcy, dcz;
     downsampleMin(&cx, &cy, &cz, &dcx, &dcy, &dcz, newCellSize);
 
-    MatrixXd surface;
-    MatrixXd t;
-
     // Point-filtering is performed iteratively at each level of the
     // control-points hierarchy in a top-down fashion
-    for (int l = level-1; l > 0; --l)
+    for (auto l = level-1; l > 0; --l)
     {
         std::cerr << "Level " << l << std::endl;
 
@@ -459,49 +449,16 @@ std::vector<PointId> MongusFilter::processGround(PointViewPtr view)
 
         // The interpolated surface is estimated based on the filtered set of
         // TPS control-points at the previous level of hierarchy
-        surface.resize(dcz.rows(), dcz.cols());
-        surface = TPS(dcx, dcy, dcz, newCellSize);
-        char buffer[256];
-        sprintf(buffer, "surface_%d.tif", l);
-        std::string name(buffer);
-        writeMatrix(surface, name, newCellSize, view);
-
-        char bufm[256];
-        sprintf(bufm, "master_control_%d.laz", l);
-        std::string namem(bufm);
-        writeControl(cx, cy, cz, namem);
+        MatrixXd surface = TPS(dcx, dcy, dcz, newCellSize);
 
         // downsample control at level
         newCellSize = m_cellSize * std::pow(2, l-1);
         downsampleMin(&cx, &cy, &cz, &dcx, &dcy, &dcz, newCellSize);
-        char buf3[256];
-        sprintf(buf3, "control_%d.laz", l);
-        std::string name3(buf3);
-        writeControl(dcx, dcy, dcz, name3);
 
         MatrixXd R = computeResidual(dcz, surface);
-        char rbuf[256];
-        sprintf(rbuf, "residual_%d.tif", l);
-        std::string rbufn(rbuf);
-        writeMatrix(R, rbufn, newCellSize, view);
-
         MatrixXd maxZ = matrixOpen(R, 2*l);
-        char obuf[256];
-        sprintf(obuf, "open_%d.tif", l);
-        std::string obufn(obuf);
-        writeMatrix(maxZ, obufn, newCellSize, view);
-
         MatrixXd T = R - maxZ;
-        char Tbuf[256];
-        sprintf(Tbuf, "tophat_%d.tif", l);
-        std::string Tbufn(Tbuf);
-        writeMatrix(T, Tbufn, newCellSize, view);
-
-        t = computeThresholds(T, 2*l);
-        char tbuf[256];
-        sprintf(tbuf, "thresh_%d.tif", l);
-        std::string tbufn(tbuf);
-        writeMatrix(t, tbufn, newCellSize, view);
+        MatrixXd t = computeThresholds(T, 2*l);
 
         // the time complexity of the approach is reduced by filtering only the
         // control-points in each iteration
@@ -529,48 +486,92 @@ std::vector<PointId> MongusFilter::processGround(PointViewPtr view)
                 }
             }
         }
-        char buf2[256];
-        sprintf(buf2, "filtered_control_%d.laz", l);
-        std::string name2(buf2);
-        writeControl(dcx, dcy, dcz, name2);
+
+        if (log()->getLevel() > LogLevel::Debug5)
+        {
+            char buffer[256];
+            sprintf(buffer, "surface_%d.tif", l);
+            std::string name(buffer);
+            writeMatrix(surface, name, newCellSize, view);
+
+            char bufm[256];
+            sprintf(bufm, "master_control_%d.laz", l);
+            std::string namem(bufm);
+            writeControl(cx, cy, cz, namem);
+
+            // this is identical to filtered control when written here - should move it...
+            char buf3[256];
+            sprintf(buf3, "control_%d.laz", l);
+            std::string name3(buf3);
+            writeControl(dcx, dcy, dcz, name3);
+
+            char rbuf[256];
+            sprintf(rbuf, "residual_%d.tif", l);
+            std::string rbufn(rbuf);
+            writeMatrix(R, rbufn, newCellSize, view);
+
+            char obuf[256];
+            sprintf(obuf, "open_%d.tif", l);
+            std::string obufn(obuf);
+            writeMatrix(maxZ, obufn, newCellSize, view);
+
+            char Tbuf[256];
+            sprintf(Tbuf, "tophat_%d.tif", l);
+            std::string Tbufn(Tbuf);
+            writeMatrix(T, Tbufn, newCellSize, view);
+
+            char tbuf[256];
+            sprintf(tbuf, "thresh_%d.tif", l);
+            std::string tbufn(tbuf);
+            writeMatrix(t, tbufn, newCellSize, view);
+
+            char buf2[256];
+            sprintf(buf2, "filtered_control_%d.laz", l);
+            std::string name2(buf2);
+            writeControl(dcx, dcy, dcz, name2);
+        }
     }
 
-    surface.resize(dcz.rows(), dcz.cols());
-    surface = TPS(dcx, dcy, dcz, newCellSize);
-    char buffer[256];
-    sprintf(buffer, "final_surface.tif");
-    std::string name(buffer);
-    writeMatrix(surface, name, newCellSize, view);
-
+    MatrixXd surface = TPS(dcx, dcy, dcz, newCellSize);
     MatrixXd R = computeResidual(cz, surface);
-    char rbuf[256];
-    sprintf(rbuf, "final_residual.tif");
-    std::string rbufn(rbuf);
-    writeMatrix(R, rbufn, newCellSize, view);
-
     MatrixXd maxZ = matrixOpen(R, 2);
-    char obuf[256];
-    sprintf(obuf, "final_opened.tif");
-    std::string obufn(obuf);
-    writeMatrix(maxZ, obufn, newCellSize, view);
-
     MatrixXd T = R - maxZ;
-    char Tbuf[256];
-    sprintf(Tbuf, "final_tophat.tif");
-    std::string Tbufn(Tbuf);
-    writeMatrix(T, Tbufn, newCellSize, view);
+    MatrixXd t = computeThresholds(T, 2);
 
-    t = computeThresholds(T, 2);
-    char tbuf[256];
-    sprintf(tbuf, "final_thresh.tif");
-    std::string tbufn(tbuf);
-    writeMatrix(t, tbufn, newCellSize, view);
+    if (log()->getLevel() > LogLevel::Debug5)
+    {
+        writeControl(cx, cy, mc, "closed.laz");
+
+        char buffer[256];
+        sprintf(buffer, "final_surface.tif");
+        std::string name(buffer);
+        writeMatrix(surface, name, newCellSize, view);
+
+        char rbuf[256];
+        sprintf(rbuf, "final_residual.tif");
+        std::string rbufn(rbuf);
+        writeMatrix(R, rbufn, newCellSize, view);
+
+        char obuf[256];
+        sprintf(obuf, "final_opened.tif");
+        std::string obufn(obuf);
+        writeMatrix(maxZ, obufn, newCellSize, view);
+
+        char Tbuf[256];
+        sprintf(Tbuf, "final_tophat.tif");
+        std::string Tbufn(Tbuf);
+        writeMatrix(T, Tbufn, newCellSize, view);
+
+        char tbuf[256];
+        sprintf(tbuf, "final_thresh.tif");
+        std::string tbufn(tbuf);
+        writeMatrix(t, tbufn, newCellSize, view);
+    }
 
     // apply final filtering (top hat) using raw points against TPS
 
     // ...the LiDAR points are filtered only at the bottom level.
     std::cerr << newCellSize << std::endl;
-    std::cerr << t.size() << "\t" << surface.size() << std::endl;
     for (PointId i = 0; i < np; ++i)
     {
         using namespace Dimension::Id;
