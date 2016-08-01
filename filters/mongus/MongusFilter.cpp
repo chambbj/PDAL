@@ -382,8 +382,6 @@ std::vector<PointId> MongusFilter::processGround(PointViewPtr view)
 
     view->calculateBounds(m_bounds);
 
-    // m_cellSize = 0.5;
-
     m_numCols =
         static_cast<int>(ceil((m_bounds.maxx - m_bounds.minx)/m_cellSize)) + 1;
     m_numRows =
@@ -418,42 +416,18 @@ std::vector<PointId> MongusFilter::processGround(PointViewPtr view)
         }
     }
 
-    // writeControl(cx, cy, cz, "minZ.laz");
-
     // In our case, 2D structural elements of circular shape are employed and
     // sufficient accuracy is achieved by using a larger window size for opening
     // (W11) than for closing (W9).
     MatrixXd mo = matrixOpen(cz, 11);
-    // writeControl(cx, cy, mo, "opened.laz");
     MatrixXd mc = matrixClose(mo, 9);
     writeControl(cx, cy, mc, "closed.laz");
-
-    // MatrixXd messing = TPS(cx, cy, mc, m_cellSize);
-    // writeMatrix(messing, "messing.tif", m_cellSize, view);
 
     point_count_t num_low(0);
 
     // ...in order to minimize the distortions caused by such filtering, the
     // output points ... are compared to C and only ci with significantly lower
     // elevation [are] replaced... In our case, d = 1.0 m was used.
-    // for (PointId i = 0; i < np; ++i)
-    // {
-    //     using namespace Dimension::Id;
-    //     double x = view->getFieldAs<double>(X, i);
-    //     double y = view->getFieldAs<double>(Y, i);
-    //     double z = view->getFieldAs<double>(Z, i);
-    //
-    //     int c = clamp(getColIndex(x, m_cellSize), 0, m_numCols-1);
-    //     int r = clamp(getRowIndex(y, m_cellSize), 0, m_numRows-1);
-    //
-    //     MatrixXd diff = mc(r, c) - z;
-    //
-    //     if (diff >= 1.0)
-    //     {
-    //         view->setField(Dimension::Id::Z, i, mc(r, c));
-    //         num_low++;
-    //     }
-    // }
     for (int i = 0; i < cz.size(); ++i)
     {
         double diff = mc(i) - cz(i);
@@ -465,21 +439,14 @@ std::vector<PointId> MongusFilter::processGround(PointViewPtr view)
     }
     std::cerr << num_low << " low points replaced\n";
 
-    // writeControl(cx, cy, cz, "newControl.laz");
-
     // downsample control at max_level
     int level = m_l;
     double newCellSize = m_cellSize * std::pow(2, level-1);
 
     MatrixXd dcx, dcy, dcz;
     downsampleMin(&cx, &cy, &cz, &dcx, &dcy, &dcz, newCellSize);
-    // writeControl(dcx, dcy, dcz, "control_init.laz");
 
-    // compute TPS at max_level
-    // MatrixXd surface = TPS(dcx, dcy, dcz, newCellSize);
     MatrixXd surface;
-    // writeMatrix(surface, "temp.tif", newCellSize, view);
-
     MatrixXd t;
 
     // Point-filtering is performed iteratively at each level of the
@@ -538,7 +505,6 @@ std::vector<PointId> MongusFilter::processGround(PointViewPtr view)
 
         // the time complexity of the approach is reduced by filtering only the
         // control-points in each iteration
-        // std::cerr << T.size() << "\t" << t.size() << "\t" << surface.size() << "\t" << dcz.size() << std::endl;
         for (int c = 0; c < T.cols(); ++c)
         {
             for (int r = 0; r < T.rows(); ++r)
@@ -554,12 +520,9 @@ std::vector<PointId> MongusFilter::processGround(PointViewPtr view)
                     MatrixXd block = cz.block(rs, cs, newCellSize, newCellSize);
                     MatrixXd::Index ri, ci;
                     block.minCoeff(&ri, &ci);
-                    // std::cerr << block << std::endl;
 
                     ri += rs;
                     ci += cs;
-
-                    // std::cerr << ri << "\t" << ci << "\t" << cz(ri, ci) << "\t" << rr << "\t" << cc << "\t" << surface(rr, cc) << "\t" << r << "\t" << c << "\t" << dcz(r, c) << "\t" << T(r, c) << "\t" << t(r, c) << std::endl;
 
                     dcz(r, c) = surface(rr, cc);
                     cz(ri, ci) = surface(rr, cc);
@@ -603,16 +566,6 @@ std::vector<PointId> MongusFilter::processGround(PointViewPtr view)
     std::string tbufn(tbuf);
     writeMatrix(t, tbufn, newCellSize, view);
 
-    // one last residual with original control points and final TPS surface?
-    // MatrixXd R = cz - surface;
-    // MatrixXd maxZ = matrixOpen(R, 4);
-    // MatrixXd T = R - maxZ;
-    // t = computeThresholds(T, 4);
-
-    // std::cerr << surface << std::endl << std::endl;
-    // std::cerr << R << std::endl << std::endl;
-    // std::cerr << t << std::endl << std::endl;
-
     // apply final filtering (top hat) using raw points against TPS
 
     // ...the LiDAR points are filtered only at the bottom level.
@@ -627,7 +580,6 @@ std::vector<PointId> MongusFilter::processGround(PointViewPtr view)
 
         int c = clamp(getColIndex(x, newCellSize), 0, m_numCols-1);
         int r = clamp(getRowIndex(y, newCellSize), 0, m_numRows-1);
-
 
         double res = z - surface(r, c);
         // open?
