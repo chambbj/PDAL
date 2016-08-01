@@ -429,9 +429,8 @@ std::vector<PointId> MongusFilter::processGround(PointViewPtr view)
     // elevation [are] replaced... In our case, d = 1.0 m was used.
     for (auto i = 0; i < cz.size(); ++i)
     {
-        if ((mc(i) - cz(i)) < 1.0)
-            continue;
-        cz(i) = mc(i);
+        if ((mc(i) - cz(i)) >= 1.0)
+            cz(i) = mc(i);
     }
 
     // downsample control at max_level
@@ -576,10 +575,10 @@ std::vector<PointId> MongusFilter::processGround(PointViewPtr view)
     // apply final filtering (top hat) using raw points against TPS
 
     // ...the LiDAR points are filtered only at the bottom level.
-    std::cerr << cur_cell_size << std::endl;
     for (auto i = 0; i < np; ++i)
     {
         using namespace Dimension;
+        
         double x = view->getFieldAs<double>(Id::X, i);
         double y = view->getFieldAs<double>(Id::Y, i);
         double z = view->getFieldAs<double>(Id::Z, i);
@@ -588,7 +587,6 @@ std::vector<PointId> MongusFilter::processGround(PointViewPtr view)
         int r = clamp(getRowIndex(y, cur_cell_size), 0, m_numRows-1);
 
         double res = z - surface(r, c);
-        // open?
         if (res < t(r, c))
             groundIdx.push_back(i);
     }
