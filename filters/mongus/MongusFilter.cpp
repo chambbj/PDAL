@@ -341,7 +341,7 @@ void MongusFilter::writeMatrix(Eigen::MatrixXd data, std::string filename, doubl
 void MongusFilter::writeControl(Eigen::MatrixXd cx, Eigen::MatrixXd cy, Eigen::MatrixXd cz, std::string filename)
 {
     using namespace Dimension;
-    
+
     PipelineManager m;
 
     PointTable table;
@@ -439,7 +439,7 @@ std::vector<PointId> MongusFilter::processGround(PointViewPtr view)
     double cur_cell_size = m_cellSize * std::pow(2, level-1);
 
     MatrixXd dcx, dcy, dcz;
-    
+
     // Top-level control samples are assumed to be ground points, no filtering
     // is applied.
     downsampleMin(&cx, &cy, &cz, &dcx, &dcy, &dcz, cur_cell_size);
@@ -659,22 +659,22 @@ Eigen::MatrixXd MongusFilter::computeResidual(Eigen::MatrixXd cz,
     return R;
 }
 
-Eigen::MatrixXd MongusFilter::padMatrix(Eigen::MatrixXd data, int radius)
+Eigen::MatrixXd MongusFilter::padMatrix(Eigen::MatrixXd d, int r)
 {
     using namespace Eigen;
 
-    MatrixXd data2 = MatrixXd::Zero(data.rows()+2*radius, data.cols()+2*radius);
-    data2.block(radius, radius, data.rows(), data.cols()) = data;
-    data2.block(radius, 0, data.rows(), radius) =
-        data.block(0, 0, data.rows(), radius).rowwise().reverse();
-    data2.block(radius, data.cols()+radius, data.rows(), radius) =
-        data.block(0, data.cols()-radius, data.rows(), radius).rowwise().reverse();
-    data2.block(0, 0, radius, data2.cols()) =
-        data2.block(radius, 0, radius, data2.cols()).colwise().reverse();
-    data2.block(data.rows()+radius, 0, radius, data2.cols()) =
-        data2.block(data2.rows()-radius, 0, radius, data2.cols()).colwise().reverse();
+    MatrixXd out = MatrixXd::Zero(d.rows()+2*r, d.cols()+2*r);
+    out.block(r, r, d.rows(), d.cols()) = d;
+    out.block(r, 0, d.rows(), r) =
+        d.block(0, 0, d.rows(), r).rowwise().reverse();
+    out.block(r, d.cols()+r, d.rows(), r) =
+        d.block(0, d.cols()-r, d.rows(), r).rowwise().reverse();
+    out.block(0, 0, r, out.cols()) =
+        out.block(r, 0, r, out.cols()).colwise().reverse();
+    out.block(d.rows()+r, 0, r, out.cols()) =
+        out.block(out.rows()-r, 0, r, out.cols()).colwise().reverse();
 
-    return data2;
+    return out;
 }
 
 Eigen::MatrixXd MongusFilter::matrixOpen(Eigen::MatrixXd data, int radius)
