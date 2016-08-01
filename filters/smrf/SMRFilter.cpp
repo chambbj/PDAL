@@ -354,10 +354,11 @@ std::vector<PointId> SMRFilter::processGround(PointViewPtr view)
 
     for (PointId i = 0; i < np; ++i)
     {
-        using namespace Dimension::Id;
-        double x = view->getFieldAs<double>(X, i);
-        double y = view->getFieldAs<double>(Y, i);
-        double z = view->getFieldAs<double>(Z, i);
+        using namespace Dimension;
+        
+        double x = view->getFieldAs<double>(Id::X, i);
+        double y = view->getFieldAs<double>(Id::Y, i);
+        double z = view->getFieldAs<double>(Id::Z, i);
 
         int c = clamp(getColIndex(x, m_cellSize), 0, m_numCols-1);
         int r = clamp(getRowIndex(y, m_cellSize), 0, m_numRows-1);
@@ -545,10 +546,10 @@ std::vector<PointId> SMRFilter::processGround(PointViewPtr view)
 
     for (PointId i = 0; i < np; ++i)
     {
-        using namespace Dimension::Id;
-        double x = view->getFieldAs<double>(X, i);
-        double y = view->getFieldAs<double>(Y, i);
-        double z = view->getFieldAs<double>(Z, i);
+        using namespace Dimension;
+        double x = view->getFieldAs<double>(Id::X, i);
+        double y = view->getFieldAs<double>(Id::Y, i);
+        double z = view->getFieldAs<double>(Id::Z, i);
 
         int c = clamp(getColIndex(x, m_cellSize), 0, m_numCols-1);
         int r = clamp(getRowIndex(y, m_cellSize), 0, m_numRows-1);
@@ -772,14 +773,16 @@ MatrixXd SMRFilter::TPS(MatrixXd cx, MatrixXd cy, MatrixXd cz)
 
 void SMRFilter::writeControl(MatrixXd cx, MatrixXd cy, MatrixXd cz, std::string filename)
 {
+    using namespace Dimension;
+    
     PipelineManager m;
 
     PointTable table;
     PointViewPtr view(new PointView(table));
 
-    table.layout()->registerDim(Dimension::Id::X);
-    table.layout()->registerDim(Dimension::Id::Y);
-    table.layout()->registerDim(Dimension::Id::Z);
+    table.layout()->registerDim(Id::X);
+    table.layout()->registerDim(Id::Y);
+    table.layout()->registerDim(Id::Z);
 
     PointId i = 0;
     for (int j = 0; j < cz.size(); ++j)
@@ -788,9 +791,9 @@ void SMRFilter::writeControl(MatrixXd cx, MatrixXd cy, MatrixXd cz, std::string 
             continue;
         if (cz(j) == std::numeric_limits<double>::max())
             continue;
-        view->setField(Dimension::Id::X, i, cx(j));
-        view->setField(Dimension::Id::Y, i, cy(j));
-        view->setField(Dimension::Id::Z, i, cz(j));
+        view->setField(Id::X, i, cx(j));
+        view->setField(Id::Y, i, cy(j));
+        view->setField(Id::Z, i, cz(j));
         i++;
     }
 
