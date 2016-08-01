@@ -63,6 +63,9 @@ std::string MongusFilter::getName() const
 
 void MongusFilter::addArgs(ProgramArgs& args)
 {
+    args.add("cell", "Cell size", m_cellSize, 1.0);
+    args.add("k", "Stdev multiplier for threshold", m_k, 3.0);
+    args.add("l", "Max level", m_l, 8);
     args.add("classify", "Apply classification labels?", m_classify, true);
     args.add("extract", "Extract ground returns?", m_extract);
 }
@@ -379,7 +382,7 @@ std::vector<PointId> MongusFilter::processGround(PointViewPtr view)
 
     view->calculateBounds(m_bounds);
 
-    m_cellSize = 1.0;
+    // m_cellSize = 0.5;
 
     m_numCols =
         static_cast<int>(ceil((m_bounds.maxx - m_bounds.minx)/m_cellSize)) + 1;
@@ -415,13 +418,13 @@ std::vector<PointId> MongusFilter::processGround(PointViewPtr view)
         }
     }
     
-    writeControl(cx, cy, cz, "minZ.laz");
+    // writeControl(cx, cy, cz, "minZ.laz");
 
     // In our case, 2D structural elements of circular shape are employed and
     // sufficient accuracy is achieved by using a larger window size for opening
     // (W11) than for closing (W9).
     MatrixXd mo = matrixOpen(cz, 11);
-    writeControl(cx, cy, mo, "opened.laz");
+    // writeControl(cx, cy, mo, "opened.laz");
     MatrixXd mc = matrixClose(mo, 9);
     writeControl(cx, cy, mc, "closed.laz");
     
@@ -462,19 +465,20 @@ std::vector<PointId> MongusFilter::processGround(PointViewPtr view)
     }
     std::cerr << num_low << " low points replaced\n";
     
-    writeControl(cx, cy, cz, "newControl.laz");
+    // writeControl(cx, cy, cz, "newControl.laz");
 
     // downsample control at max_level
-    int level = 7;
-    double newCellSize = std::pow(2, level-1);
+    int level = m_l;
+    double newCellSize = m_cellSize * std::pow(2, level-1);
 
     MatrixXd dcx, dcy, dcz;
     downsampleMin(&cx, &cy, &cz, &dcx, &dcy, &dcz, newCellSize);
-    writeControl(dcx, dcy, dcz, "temp.laz");
+    // writeControl(dcx, dcy, dcz, "control_init.laz");
 
     // compute TPS at max_level
-    MatrixXd surface = TPS(dcx, dcy, dcz, newCellSize);
-    writeMatrix(surface, "temp.tif", newCellSize, view);
+    // MatrixXd surface = TPS(dcx, dcy, dcz, newCellSize);
+    MatrixXd surface;
+    // writeMatrix(surface, "temp.tif", newCellSize, view);
 
     MatrixXd t;
 
@@ -483,36 +487,52 @@ std::vector<PointId> MongusFilter::processGround(PointViewPtr view)
     for (int l = level-1; l > 0; --l)
     {
         std::cerr << "Level " << l << std::endl;
+        
+        // compute TPS with update control at level
 
+        // The interpolated surface is estimated based on the filtered set of
+        // TPS control-points at the previous level of hierarchy
+        surface.resize(dcz.rows(), dcz.cols());
+        surface = TPS(dcx, dcy, dcz, newCellSize);
+        char buffer[256];
+        sprintf(buffer, "surface_%d.tif", l);
+        std::string name(buffer);
+        writeMatrix(surface, name, newCellSize, view);
+
+        char bufm[256];
+        sprintf(bufm, "master_control_%d.laz", l);
+        std::string namem(bufm);
+        writeControl(cx, cy, cz, namem);
+        
         // downsample control at level
-        newCellSize = std::pow(2, l-1);
+        newCellSize = m_cellSize * std::pow(2, l-1);
         downsampleMin(&cx, &cy, &cz, &dcx, &dcy, &dcz, newCellSize);
         char buf3[256];
-        sprintf(buf3, "before%d.laz", l);
+        sprintf(buf3, "control_%d.laz", l);
         std::string name3(buf3);
         writeControl(dcx, dcy, dcz, name3);
 
         MatrixXd R = computeResidual(dcz, surface);
         char rbuf[256];
-        sprintf(rbuf, "R%d.tif", l);
+        sprintf(rbuf, "residual_%d.tif", l);
         std::string rbufn(rbuf);
         writeMatrix(R, rbufn, newCellSize, view);
         
         MatrixXd maxZ = matrixOpen(R, 2*l);
         char obuf[256];
-        sprintf(obuf, "open%d.tif", l);
+        sprintf(obuf, "open_%d.tif", l);
         std::string obufn(obuf);
         writeMatrix(maxZ, obufn, newCellSize, view);
         
         MatrixXd T = R - maxZ;
         char Tbuf[256];
-        sprintf(Tbuf, "tophat%d.tif", l);
+        sprintf(Tbuf, "tophat_%d.tif", l);
         std::string Tbufn(Tbuf);
         writeMatrix(T, Tbufn, newCellSize, view);
         
-        t = computeThresholds(T, 2);
+        t = computeThresholds(T, 2*l);
         char tbuf[256];
-        sprintf(tbuf, "thresh%d.tif", l);
+        sprintf(tbuf, "thresh_%d.tif", l);
         std::string tbufn(tbuf);
         writeMatrix(t, tbufn, newCellSize, view);
 
@@ -547,22 +567,41 @@ std::vector<PointId> MongusFilter::processGround(PointViewPtr view)
             }
         }
         char buf2[256];
-        sprintf(buf2, "after%d.laz", l);
+        sprintf(buf2, "filtered_control_%d.laz", l);
         std::string name2(buf2);
         writeControl(dcx, dcy, dcz, name2);
-
-        // compute TPS with update control at level
-
-        // The interpolated surface is estimated based on the filtered set of
-        // TPS control-points at the previous level of hierarchy
-        surface.resize(dcz.rows(), dcz.cols());
-        surface = TPS(dcx, dcy, dcz, newCellSize);
-        char buffer[256];
-        sprintf(buffer, "temp%d.tif", l);
-        std::string name(buffer);
-        writeMatrix(surface, name, newCellSize, view);
     }
+    
+    surface.resize(dcz.rows(), dcz.cols());
+    surface = TPS(dcx, dcy, dcz, newCellSize);
+    char buffer[256];
+    sprintf(buffer, "final_surface.tif");
+    std::string name(buffer);
+    writeMatrix(surface, name, newCellSize, view);
 
+    MatrixXd R = computeResidual(cz, surface);
+    char rbuf[256];
+    sprintf(rbuf, "final_residual.tif");
+    std::string rbufn(rbuf);
+    writeMatrix(R, rbufn, newCellSize, view);
+    
+    MatrixXd maxZ = matrixOpen(R, 2);
+    char obuf[256];
+    sprintf(obuf, "final_opened.tif");
+    std::string obufn(obuf);
+    writeMatrix(maxZ, obufn, newCellSize, view);
+    
+    MatrixXd T = R - maxZ;
+    char Tbuf[256];
+    sprintf(Tbuf, "final_tophat.tif");
+    std::string Tbufn(Tbuf);
+    writeMatrix(T, Tbufn, newCellSize, view);
+    
+    t = computeThresholds(T, 2);
+    char tbuf[256];
+    sprintf(tbuf, "final_thresh.tif");
+    std::string tbufn(tbuf);
+    writeMatrix(t, tbufn, newCellSize, view);
 
     // one last residual with original control points and final TPS surface?
     // MatrixXd R = cz - surface;
@@ -834,7 +873,7 @@ Eigen::MatrixXd MongusFilter::computeThresholds(Eigen::MatrixXd T, int radius)
                     M2 += term1;
                 }
             }
-            t(r, c) = M1 + 3 * std::sqrt(M2/(n-1));
+            t(r, c) = M1 + m_k * std::sqrt(M2/(n-1));
         }
     }
 

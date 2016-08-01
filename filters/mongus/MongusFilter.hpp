@@ -70,6 +70,8 @@ private:
     int m_numCols;
     int m_maxRow;
     double m_cellSize;
+    double m_k;
+    int m_l;
     BOX2D m_bounds;
 
     virtual void addDimensions(PointLayoutPtr layout);
