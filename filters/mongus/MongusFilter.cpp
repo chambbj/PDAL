@@ -436,13 +436,13 @@ std::vector<PointId> MongusFilter::processGround(PointViewPtr view)
 
     // downsample control at max_level
     int level = m_l;
-    double newCellSize = m_cellSize * std::pow(2, level-1);
+    double cur_cell_size = m_cellSize * std::pow(2, level-1);
 
     MatrixXd dcx, dcy, dcz;
     
     // Top-level control samples are assumed to be ground points, no filtering
     // is applied.
-    downsampleMin(&cx, &cy, &cz, &dcx, &dcy, &dcz, newCellSize);
+    downsampleMin(&cx, &cy, &cz, &dcx, &dcy, &dcz, cur_cell_size);
 
     // Point-filtering is performed iteratively at each level of the
     // control-points hierarchy in a top-down fashion
@@ -454,11 +454,11 @@ std::vector<PointId> MongusFilter::processGround(PointViewPtr view)
 
         // The interpolated surface is estimated based on the filtered set of
         // TPS control-points at the previous level of hierarchy
-        MatrixXd surface = TPS(dcx, dcy, dcz, newCellSize);
+        MatrixXd surface = TPS(dcx, dcy, dcz, cur_cell_size);
 
         // downsample control at level
-        newCellSize = m_cellSize * std::pow(2, l-1);
-        downsampleMin(&cx, &cy, &cz, &dcx, &dcy, &dcz, newCellSize);
+        cur_cell_size /= 2;
+        downsampleMin(&cx, &cy, &cz, &dcx, &dcy, &dcz, cur_cell_size);
 
         MatrixXd R = computeResidual(dcz, surface);
         MatrixXd maxZ = matrixOpen(R, 2*l);
@@ -477,9 +477,9 @@ std::vector<PointId> MongusFilter::processGround(PointViewPtr view)
                 {
                     int rr = std::floor(r/2);
                     int cc = std::floor(c/2);
-                    int rs = newCellSize * r;
-                    int cs = newCellSize * c;
-                    MatrixXd block = cz.block(rs, cs, newCellSize, newCellSize);
+                    int rs = cur_cell_size * r;
+                    int cs = cur_cell_size * c;
+                    MatrixXd block = cz.block(rs, cs, cur_cell_size, cur_cell_size);
                     MatrixXd::Index ri, ci;
                     block.minCoeff(&ri, &ci);
 
@@ -497,7 +497,7 @@ std::vector<PointId> MongusFilter::processGround(PointViewPtr view)
             char buffer[256];
             sprintf(buffer, "surface_%d.tif", l);
             std::string name(buffer);
-            writeMatrix(surface, name, newCellSize, view);
+            writeMatrix(surface, name, cur_cell_size, view);
 
             char bufm[256];
             sprintf(bufm, "master_control_%d.laz", l);
@@ -513,22 +513,22 @@ std::vector<PointId> MongusFilter::processGround(PointViewPtr view)
             char rbuf[256];
             sprintf(rbuf, "residual_%d.tif", l);
             std::string rbufn(rbuf);
-            writeMatrix(R, rbufn, newCellSize, view);
+            writeMatrix(R, rbufn, cur_cell_size, view);
 
             char obuf[256];
             sprintf(obuf, "open_%d.tif", l);
             std::string obufn(obuf);
-            writeMatrix(maxZ, obufn, newCellSize, view);
+            writeMatrix(maxZ, obufn, cur_cell_size, view);
 
             char Tbuf[256];
             sprintf(Tbuf, "tophat_%d.tif", l);
             std::string Tbufn(Tbuf);
-            writeMatrix(T, Tbufn, newCellSize, view);
+            writeMatrix(T, Tbufn, cur_cell_size, view);
 
             char tbuf[256];
             sprintf(tbuf, "thresh_%d.tif", l);
             std::string tbufn(tbuf);
-            writeMatrix(t, tbufn, newCellSize, view);
+            writeMatrix(t, tbufn, cur_cell_size, view);
 
             char buf2[256];
             sprintf(buf2, "filtered_control_%d.laz", l);
@@ -537,7 +537,7 @@ std::vector<PointId> MongusFilter::processGround(PointViewPtr view)
         }
     }
 
-    MatrixXd surface = TPS(dcx, dcy, dcz, newCellSize);
+    MatrixXd surface = TPS(dcx, dcy, dcz, cur_cell_size);
     MatrixXd R = computeResidual(cz, surface);
     MatrixXd maxZ = matrixOpen(R, 2);
     MatrixXd T = R - maxZ;
@@ -550,33 +550,33 @@ std::vector<PointId> MongusFilter::processGround(PointViewPtr view)
         char buffer[256];
         sprintf(buffer, "final_surface.tif");
         std::string name(buffer);
-        writeMatrix(surface, name, newCellSize, view);
+        writeMatrix(surface, name, cur_cell_size, view);
 
         char rbuf[256];
         sprintf(rbuf, "final_residual.tif");
         std::string rbufn(rbuf);
-        writeMatrix(R, rbufn, newCellSize, view);
+        writeMatrix(R, rbufn, cur_cell_size, view);
 
         char obuf[256];
         sprintf(obuf, "final_opened.tif");
         std::string obufn(obuf);
-        writeMatrix(maxZ, obufn, newCellSize, view);
+        writeMatrix(maxZ, obufn, cur_cell_size, view);
 
         char Tbuf[256];
         sprintf(Tbuf, "final_tophat.tif");
         std::string Tbufn(Tbuf);
-        writeMatrix(T, Tbufn, newCellSize, view);
+        writeMatrix(T, Tbufn, cur_cell_size, view);
 
         char tbuf[256];
         sprintf(tbuf, "final_thresh.tif");
         std::string tbufn(tbuf);
-        writeMatrix(t, tbufn, newCellSize, view);
+        writeMatrix(t, tbufn, cur_cell_size, view);
     }
 
     // apply final filtering (top hat) using raw points against TPS
 
     // ...the LiDAR points are filtered only at the bottom level.
-    std::cerr << newCellSize << std::endl;
+    std::cerr << cur_cell_size << std::endl;
     for (auto i = 0; i < np; ++i)
     {
         using namespace Dimension;
@@ -584,8 +584,8 @@ std::vector<PointId> MongusFilter::processGround(PointViewPtr view)
         double y = view->getFieldAs<double>(Id::Y, i);
         double z = view->getFieldAs<double>(Id::Z, i);
 
-        int c = clamp(getColIndex(x, newCellSize), 0, m_numCols-1);
-        int r = clamp(getRowIndex(y, newCellSize), 0, m_numRows-1);
+        int c = clamp(getColIndex(x, cur_cell_size), 0, m_numCols-1);
+        int r = clamp(getRowIndex(y, cur_cell_size), 0, m_numRows-1);
 
         double res = z - surface(r, c);
         // open?
