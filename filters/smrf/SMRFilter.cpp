@@ -351,7 +351,7 @@ std::vector<PointId> SMRFilter::processGround(PointViewPtr view)
 
     MatrixXd cy(m_numRows, m_numCols);
     cy.setConstant(std::numeric_limits<double>::quiet_NaN());
-    
+
     // set cx, cy
     for (auto c = 0; c < m_numCols; ++c)
     {
@@ -365,7 +365,7 @@ std::vector<PointId> SMRFilter::processGround(PointViewPtr view)
     for (PointId i = 0; i < np; ++i)
     {
         using namespace Dimension;
-        
+
         double x = view->getFieldAs<double>(Id::X, i);
         double y = view->getFieldAs<double>(Id::Y, i);
         double z = view->getFieldAs<double>(Id::Z, i);
@@ -489,7 +489,7 @@ std::vector<PointId> SMRFilter::processGround(PointViewPtr view)
         // auto ZIpro_painted = inpaint(ZIpro);
         auto ZIpro_painted = TPS(cx, cy, ZIpro);
         writeMatrix(ZIpro_painted, "zipro_painted.tif", m_cellSize, view);
-    
+
         // for (int i = 0; i < ZIpro.size(); ++i)
         // {
         //     if (std::isnan(ZIpro(i)))
@@ -637,7 +637,7 @@ MatrixXd SMRFilter::TPS(MatrixXd cx, MatrixXd cy, MatrixXd cz)
     log()->get(LogLevel::Debug) << "Reticulating splines...\n";
 
     MatrixXd S = cz;
-    
+
     int num_nan_detect(0);
     int num_nan_replace(0);
 
@@ -647,9 +647,9 @@ MatrixXd SMRFilter::TPS(MatrixXd cx, MatrixXd cy, MatrixXd cz)
         {
             if (!std::isnan(S(outer_row, outer_col)))
                 continue;
-                
+
             num_nan_detect++;
-                
+
             // Further optimizations are achieved by estimating only the
             // interpolated surface within a local neighbourhood (e.g. a 7 x 7
             // neighbourhood is used in our case) of the cell being filtered.
@@ -700,9 +700,9 @@ MatrixXd SMRFilter::TPS(MatrixXd cx, MatrixXd cy, MatrixXd cz)
 
             VectorXd b = VectorXd::Zero(nsize+3);
             b.head(nsize) = T;
-            
+
             VectorXd x = A.fullPivHouseholderQr().solve(b);
-            
+
             Vector3d a = x.tail(3);
             VectorXd w = x.head(nsize);
 
@@ -725,7 +725,7 @@ MatrixXd SMRFilter::TPS(MatrixXd cx, MatrixXd cy, MatrixXd cz)
             }
 
             S(outer_row, outer_col) = a(0) + a(1)*xi2 + a(2)*yi2 + sum;
-            
+
             if (!std::isnan(S(outer_row, outer_col)))
                 num_nan_replace++;
 
@@ -778,7 +778,7 @@ MatrixXd SMRFilter::TPS(MatrixXd cx, MatrixXd cy, MatrixXd cz)
             //           << std::endl;
         }
     }
-    
+
     std::cerr << num_nan_detect << "\t" << num_nan_replace << std::endl;
 
     return S;
@@ -787,7 +787,7 @@ MatrixXd SMRFilter::TPS(MatrixXd cx, MatrixXd cy, MatrixXd cz)
 void SMRFilter::writeControl(MatrixXd cx, MatrixXd cy, MatrixXd cz, std::string filename)
 {
     using namespace Dimension;
-    
+
     PipelineManager m;
 
     PointTable table;
