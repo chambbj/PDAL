@@ -352,7 +352,6 @@ std::vector<PointId> SMRFilter::processGround(PointViewPtr view)
     MatrixXd cy(m_numRows, m_numCols);
     cy.setConstant(std::numeric_limits<double>::quiet_NaN());
 
-    // set cx, cy
     for (auto c = 0; c < m_numCols; ++c)
     {
         for (auto r = 0; r < m_numRows; ++r)
@@ -375,8 +374,6 @@ std::vector<PointId> SMRFilter::processGround(PointViewPtr view)
 
         if (z < ZImin(r, c) || std::isnan(ZImin(r, c)))
         {
-            // cx(r, c) = x;
-            // cy(r, c) = y;
             ZImin(r, c) = z;
         }
     }
@@ -388,11 +385,6 @@ std::vector<PointId> SMRFilter::processGround(PointViewPtr view)
         auto ZImin_painted = TPS(cx, cy, ZImin);
         writeMatrix(ZImin_painted, "zimin_painted.tif", m_cellSize, view);
 
-        // for (int i = 0; i < ZImin.size(); ++i)
-        // {
-        //     if (std::isnan(ZImin(i)))
-        //         ZImin(i) = ZImin_painted(i);
-        // }
         ZImin = ZImin_painted;
     }
 
@@ -474,8 +466,6 @@ std::vector<PointId> SMRFilter::processGround(PointViewPtr view)
     // according to the same process described previously, producing a
     // provisional DEM (ZIpro).
 
-    // MatrixXd ZIpro(m_numRows, m_numCols);
-    // ZIpro.setConstant(std::numeric_limits<float>::min()); // NODATA = FLT_MIN
     MatrixXd ZIpro = ZImin;
     for (int i = 0; i < Obj.size(); ++i)
     {
@@ -693,7 +683,6 @@ MatrixXd SMRFilter::TPS(MatrixXd cx, MatrixXd cy, MatrixXd cz)
                 }
             }
             
-            std::cerr << numK << std::endl;
             if (numK < 20)
                 continue;
             
@@ -711,13 +700,8 @@ MatrixXd SMRFilter::TPS(MatrixXd cx, MatrixXd cy, MatrixXd cz)
             VectorXd w = x.head(nsize);
 
             double sum = 0.0;
-            // double xi = m_bounds.minx + outer_col * m_cellSize + m_cellSize / 2;
             double xi2 = cx(outer_row, outer_col);
-            // double yi = m_maxRow - (outer_row * m_cellSize + m_cellSize / 2);
             double yi2 = cy(outer_row, outer_col);
-            // double zi = cz(outer_row, outer_col);
-            // if (zi == std::numeric_limits<double>::max())
-            //     continue;
             for (auto j = 0; j < nsize; ++j)
             {
                 double xj = Xn(j);
