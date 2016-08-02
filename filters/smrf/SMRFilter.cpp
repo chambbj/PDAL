@@ -351,6 +351,16 @@ std::vector<PointId> SMRFilter::processGround(PointViewPtr view)
 
     MatrixXd cy(m_numRows, m_numCols);
     cy.setConstant(std::numeric_limits<double>::quiet_NaN());
+    
+    // set cx, cy
+    for (auto c = 0; c < m_numCols; ++c)
+    {
+        for (auto r = 0; r < m_numRows; ++r)
+        {
+            cx(r, c) = m_bounds.minx + (c + 0.5) * m_cellSize;
+            cy(r, c) = m_bounds.miny + (r + 0.5) * m_cellSize;
+        }
+    }
 
     for (PointId i = 0; i < np; ++i)
     {
@@ -365,8 +375,8 @@ std::vector<PointId> SMRFilter::processGround(PointViewPtr view)
 
         if (z < ZImin(r, c) || std::isnan(ZImin(r, c)))
         {
-            cx(r, c) = x;
-            cy(r, c) = y;
+            // cx(r, c) = x;
+            // cy(r, c) = y;
             ZImin(r, c) = z;
         }
     }
@@ -374,7 +384,8 @@ std::vector<PointId> SMRFilter::processGround(PointViewPtr view)
 
     if (m_inpaint)
     {
-        auto ZImin_painted = inpaint(ZImin);
+        // auto ZImin_painted = inpaint(ZImin);
+        auto ZImin_painted = TPS(cx, cy, ZImin);
         writeMatrix(ZImin_painted, "zimin_painted.tif", m_cellSize, view);
 
         // for (int i = 0; i < ZImin.size(); ++i)
@@ -475,9 +486,10 @@ std::vector<PointId> SMRFilter::processGround(PointViewPtr view)
 
     if (m_inpaint)
     {
-        auto ZIpro_painted = inpaint(ZIpro);
+        // auto ZIpro_painted = inpaint(ZIpro);
+        auto ZIpro_painted = TPS(cx, cy, ZIpro);
         writeMatrix(ZIpro_painted, "zipro_painted.tif", m_cellSize, view);
-
+    
         // for (int i = 0; i < ZIpro.size(); ++i)
         // {
         //     if (std::isnan(ZIpro(i)))
@@ -624,16 +636,24 @@ MatrixXd SMRFilter::TPS(MatrixXd cx, MatrixXd cy, MatrixXd cz)
 {
     log()->get(LogLevel::Debug) << "Reticulating splines...\n";
 
-    MatrixXd S = MatrixXd::Zero(m_numRows, m_numCols);
+    MatrixXd S = cz;
+    
+    int num_nan_detect(0);
+    int num_nan_replace(0);
 
-    for (int outer_col = 0; outer_col < m_numCols; ++outer_col)
+    for (auto outer_col = 0; outer_col < m_numCols; ++outer_col)
     {
-        for (int outer_row = 0; outer_row < m_numRows; ++outer_row)
+        for (auto outer_row = 0; outer_row < m_numRows; ++outer_row)
         {
+            if (!std::isnan(S(outer_row, outer_col)))
+                continue;
+                
+            num_nan_detect++;
+                
             // Further optimizations are achieved by estimating only the
             // interpolated surface within a local neighbourhood (e.g. a 7 x 7
             // neighbourhood is used in our case) of the cell being filtered.
-            int radius = 3;
+            int radius = 5;
 
             int cs = clamp(outer_col-radius, 0, m_numCols-1);
             int ce = clamp(outer_col+radius, 0, m_numCols-1);
@@ -651,29 +671,21 @@ MatrixXd SMRFilter::TPS(MatrixXd cx, MatrixXd cy, MatrixXd cz)
             MatrixXd P = MatrixXd::Zero(nsize, 3);
             MatrixXd K = MatrixXd::Zero(nsize, nsize);
 
-            for (int id = 0; id < Hn.size(); ++id)
+            for (auto id = 0; id < Hn.size(); ++id)
             {
                 double xj = Xn(id);
-                if (std::isnan(xj))
-                    continue;
                 double yj = Yn(id);
-                if (std::isnan(yj))
-                    continue;
                 double zj = Hn(id);
-                if (zj == std::numeric_limits<double>::max())
+                if (std::isnan(zj))
                     continue;
                 T(id) = zj;
                 P.row(id) << 1, xj, yj;
-                for (int id2 = 0; id2 < Hn.size(); ++id2)
+                for (auto id2 = 0; id2 < Hn.size(); ++id2)
                 {
                     if (id == id2)
                         continue;
                     double xk = Xn(id2);
-                    if (std::isnan(xk))
-                        continue;
                     double yk = Yn(id2);
-                    if (std::isnan(yk))
-                        continue;
                     double rsqr = (xj - xk) * (xj - xk) + (yj - yk) * (yj - yk);
                     if (rsqr == 0.0)
                         continue;
@@ -688,35 +700,34 @@ MatrixXd SMRFilter::TPS(MatrixXd cx, MatrixXd cy, MatrixXd cz)
 
             VectorXd b = VectorXd::Zero(nsize+3);
             b.head(nsize) = T;
-
+            
             VectorXd x = A.fullPivHouseholderQr().solve(b);
-
+            
             Vector3d a = x.tail(3);
             VectorXd w = x.head(nsize);
 
             double sum = 0.0;
-            double xi = m_bounds.minx + outer_col * m_cellSize + m_cellSize / 2;
+            // double xi = m_bounds.minx + outer_col * m_cellSize + m_cellSize / 2;
             double xi2 = cx(outer_row, outer_col);
-            double yi = m_maxRow - (outer_row * m_cellSize + m_cellSize / 2);
+            // double yi = m_maxRow - (outer_row * m_cellSize + m_cellSize / 2);
             double yi2 = cy(outer_row, outer_col);
-            double zi = cz(outer_row, outer_col);
-            if (zi == std::numeric_limits<double>::max())
-                continue;
-            for (int j = 0; j < nsize; ++j)
+            // double zi = cz(outer_row, outer_col);
+            // if (zi == std::numeric_limits<double>::max())
+            //     continue;
+            for (auto j = 0; j < nsize; ++j)
             {
                 double xj = Xn(j);
-                if (std::isnan(xj))
-                    continue;
                 double yj = Yn(j);
-                if (std::isnan(yj))
-                    continue;
-                double rsqr = (xj - xi) * (xj - xi) + (yj - yi) * (yj - yi);
+                double rsqr = (xj - xi2) * (xj - xi2) + (yj - yi2) * (yj - yi2);
                 if (rsqr == 0.0)
                     continue;
                 sum += w(j) * rsqr * std::log10(std::sqrt(rsqr));
             }
 
-            S(outer_row, outer_col) = a(0) + a(1)*xi + a(2)*yi + sum;
+            S(outer_row, outer_col) = a(0) + a(1)*xi2 + a(2)*yi2 + sum;
+            
+            if (!std::isnan(S(outer_row, outer_col)))
+                num_nan_replace++;
 
             // std::cerr << std::fixed;
             // std::cerr << std::setprecision(3)
@@ -724,22 +735,22 @@ MatrixXd SMRFilter::TPS(MatrixXd cx, MatrixXd cy, MatrixXd cz)
             //           << "S(" << outer_row << "," << outer_col << "): "
             //           << std::setw(10)
             //           << S(outer_row, outer_col)
-            //           << std::setw(3)
-            //           << "\tz: "
-            //           << std::setw(10)
-            //           << zi
-            //           << std::setw(7)
-            //           << "\tzdiff: "
-            //           << std::setw(5)
-            //           << zi - S(outer_row, outer_col)
-            //           << std::setw(7)
-            //           << "\txdiff: "
-            //           << std::setw(5)
-            //           << xi2 - xi
-            //           << std::setw(7)
-            //           << "\tydiff: "
-            //           << std::setw(5)
-            //           << yi2 - yi
+            //           // << std::setw(3)
+            //           // << "\tz: "
+            //           // << std::setw(10)
+            //           // << zi
+            //           // << std::setw(7)
+            //           // << "\tzdiff: "
+            //           // << std::setw(5)
+            //           // << zi - S(outer_row, outer_col)
+            //           // << std::setw(7)
+            //           // << "\txdiff: "
+            //           // << std::setw(5)
+            //           // << xi2 - xi
+            //           // << std::setw(7)
+            //           // << "\tydiff: "
+            //           // << std::setw(5)
+            //           // << yi2 - yi
             //           << std::setw(7)
             //           << "\t# pts: "
             //           << std::setw(3)
@@ -767,6 +778,8 @@ MatrixXd SMRFilter::TPS(MatrixXd cx, MatrixXd cy, MatrixXd cz)
             //           << std::endl;
         }
     }
+    
+    std::cerr << num_nan_detect << "\t" << num_nan_replace << std::endl;
 
     return S;
 }
@@ -854,15 +867,15 @@ void SMRFilter::writeMatrix(MatrixXd data, std::string filename, double cell_siz
         int cs = 1, ce = cols - 1;
         int rs = 1, re = rows - 1;
         float *poRasterData = new float[cols*rows];
-        for (uint32_t i=0; i<cols*rows; i++)
+        for (auto i=0; i<cols*rows; i++)
         {
             poRasterData[i] = std::numeric_limits<float>::min();
         }
 
         // #pragma omp parallel for
-        for (int c = cs; c < ce; ++c)
+        for (auto c = cs; c < ce; ++c)
         {
-            for (int r = rs; r < re; ++r)
+            for (auto r = rs; r < re; ++r)
             {
                 if (data(r, c) == 0.0 || std::isnan(data(r, c) || data(r, c) == std::numeric_limits<double>::max()))
                     continue;
