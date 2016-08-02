@@ -490,11 +490,6 @@ std::vector<PointId> SMRFilter::processGround(PointViewPtr view)
         auto ZIpro_painted = TPS(cx, cy, ZIpro);
         writeMatrix(ZIpro_painted, "zipro_painted.tif", m_cellSize, view);
 
-        // for (int i = 0; i < ZIpro.size(); ++i)
-        // {
-        //     if (std::isnan(ZIpro(i)))
-        //         ZIpro(i) = ZIpro_painted(i);
-        // }
         ZIpro = ZIpro_painted;
     }
 
@@ -565,6 +560,9 @@ std::vector<PointId> SMRFilter::processGround(PointViewPtr view)
 
         int c = clamp(getColIndex(x, m_cellSize), 0, m_numCols-1);
         int r = clamp(getRowIndex(y, m_cellSize), 0, m_numRows-1);
+        
+        if (std::isnan(ZIpro(r, c)))
+            continue;
 
         double res = z - ZIpro(r, c);
         if (res < m_threshold)
@@ -653,7 +651,7 @@ MatrixXd SMRFilter::TPS(MatrixXd cx, MatrixXd cy, MatrixXd cz)
             // Further optimizations are achieved by estimating only the
             // interpolated surface within a local neighbourhood (e.g. a 7 x 7
             // neighbourhood is used in our case) of the cell being filtered.
-            int radius = 5;
+            int radius = 3;
 
             int cs = clamp(outer_col-radius, 0, m_numCols-1);
             int ce = clamp(outer_col+radius, 0, m_numCols-1);
@@ -671,6 +669,7 @@ MatrixXd SMRFilter::TPS(MatrixXd cx, MatrixXd cy, MatrixXd cz)
             MatrixXd P = MatrixXd::Zero(nsize, 3);
             MatrixXd K = MatrixXd::Zero(nsize, nsize);
 
+            int numK(0);
             for (auto id = 0; id < Hn.size(); ++id)
             {
                 double xj = Xn(id);
@@ -678,6 +677,7 @@ MatrixXd SMRFilter::TPS(MatrixXd cx, MatrixXd cy, MatrixXd cz)
                 double zj = Hn(id);
                 if (std::isnan(zj))
                     continue;
+                numK++;
                 T(id) = zj;
                 P.row(id) << 1, xj, yj;
                 for (auto id2 = 0; id2 < Hn.size(); ++id2)
@@ -692,7 +692,11 @@ MatrixXd SMRFilter::TPS(MatrixXd cx, MatrixXd cy, MatrixXd cz)
                     K(id, id2) = rsqr * std::log10(std::sqrt(rsqr));
                 }
             }
-
+            
+            std::cerr << numK << std::endl;
+            if (numK < 20)
+                continue;
+            
             MatrixXd A = MatrixXd::Zero(nsize+3, nsize+3);
             A.block(0,0,nsize,nsize) = K;
             A.block(0,nsize,nsize,3) = P;
@@ -825,7 +829,7 @@ void SMRFilter::writeMatrix(MatrixXd data, std::string filename, double cell_siz
 
     GDALAllRegister();
 
-    GDALDataset *mpDstDS;
+    GDALDataset *mpDstDS = NULL;
 
     char **papszMetadata;
 
