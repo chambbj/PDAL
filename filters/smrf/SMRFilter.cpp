@@ -262,66 +262,6 @@ MatrixXd SMRFilter::matrixOpen(MatrixXd data, int radius)
     return maxZ.block(radius, radius, data.rows(), data.cols());
 }
 
-MatrixXd SMRFilter::matrixClose(MatrixXd data, int radius)
-{
-    using namespace Eigen;
-
-    MatrixXd data2 = padMatrix(data, radius);
-
-    int nrows = data2.rows();
-    int ncols = data2.cols();
-
-    // first min, then max of min
-    MatrixXd minZ = MatrixXd::Constant(nrows, ncols,
-                                       std::numeric_limits<double>::max());
-    MatrixXd maxZ = MatrixXd::Constant(nrows, ncols,
-                                       std::numeric_limits<double>::lowest());
-    for (auto c = 0; c < ncols; ++c)
-    {
-        for (auto r = 0; r < nrows; ++r)
-        {
-            int cs = clamp(c-radius, 0, ncols-1);
-            int ce = clamp(c+radius, 0, ncols-1);
-            int rs = clamp(r-radius, 0, nrows-1);
-            int re = clamp(r+radius, 0, nrows-1);
-
-            for (auto col = cs; col <= ce; ++col)
-            {
-                for (auto row = rs; row <= re; ++row)
-                {
-                    if ((row-r)*(row-r)+(col-c)*(col-c) > radius*radius)
-                        continue;
-                    if (data2(row, col) > maxZ(r, c))
-                        maxZ(r, c) = data2(row, col);
-                }
-            }
-        }
-    }
-    for (auto c = 0; c < ncols; ++c)
-    {
-        for (auto r = 0; r < nrows; ++r)
-        {
-            int cs = clamp(c-radius, 0, ncols-1);
-            int ce = clamp(c+radius, 0, ncols-1);
-            int rs = clamp(r-radius, 0, nrows-1);
-            int re = clamp(r+radius, 0, nrows-1);
-
-            for (auto col = cs; col <= ce; ++col)
-            {
-                for (auto row = rs; row <= re; ++row)
-                {
-                    if ((row-r)*(row-r)+(col-c)*(col-c) > radius*radius)
-                        continue;
-                    if (maxZ(row, col) < minZ(r, c))
-                        minZ(r, c) = maxZ(row, col);
-                }
-            }
-        }
-    }
-
-    return minZ.block(radius, radius, data.rows(), data.cols());
-}
-
 MatrixXd SMRFilter::padMatrix(MatrixXd data, int radius)
 {
     log()->get(LogLevel::Debug) << "Padding...\n";
@@ -338,6 +278,231 @@ MatrixXd SMRFilter::padMatrix(MatrixXd data, int radius)
         data2.block(data2.rows()-radius, 0, radius, data2.cols()).colwise().reverse();
 
     return data2;
+}
+
+MatrixXd SMRFilter::createDSM(MatrixXd const& cx, MatrixXd const& cy, PointViewPtr view)
+{
+    point_count_t np(view->size());
+    
+    MatrixXd ZImin(m_numRows, m_numCols);
+    ZImin.setConstant(std::numeric_limits<double>::quiet_NaN());
+    
+    for (PointId i = 0; i < np; ++i)
+    {
+        using namespace Dimension;
+    
+        double x = view->getFieldAs<double>(Id::X, i);
+        double y = view->getFieldAs<double>(Id::Y, i);
+        double z = view->getFieldAs<double>(Id::Z, i);
+    
+        int c = clamp(getColIndex(x, m_cellSize), 0, m_numCols-1);
+        int r = clamp(getRowIndex(y, m_cellSize), 0, m_numRows-1);
+    
+        if (z < ZImin(r, c) || std::isnan(ZImin(r, c)))
+        {
+            ZImin(r, c) = z;
+        }
+    }
+    writeMatrix(ZImin, "zimin.tif", m_cellSize, view);
+    
+    if (m_inpaint)
+    {
+        // auto ZImin_painted = inpaint(ZImin);
+        auto ZImin_painted = TPS(cx, cy, ZImin);
+        writeMatrix(ZImin_painted, "zimin_painted.tif", m_cellSize, view);
+    
+        ZImin = ZImin_painted;
+    }
+    
+    return ZImin;
+}
+
+MatrixXi SMRFilter::progressiveFilter(MatrixXd const& ZImin, double cell_size, double slope, double max_window)
+{
+    MatrixXi Obj(m_numRows, m_numCols);
+    Obj.setZero();
+
+    // In this case, we selected a disk-shaped structuring element, and the
+    // radius of the element at each step was increased by one pixel from a
+    // starting value of one pixel to the pixel equivalent of the maximum value
+    // (wkmax). The maximum window radius is supplied as a distance metric
+    // (e.g., 21 m), but is internally converted to a pixel equivalent by
+    // dividing it by the cell size and rounding the result toward positive
+    // infinity (i.e., taking the ceiling value). For example, for a supplied
+    // maximum window radius of 21 m, and a cell size of 2m per pixel, the
+    // result would be a maximum window radius of 11 pixels. While this
+    // represents a relatively slow progression in the expansion of the window
+    // radius, we believe that the high efficiency associated with the opening
+    // operation mitigates the potential for computational waste. The
+    // improvements in classification accuracy using slow, linear progressions
+    // are documented in the next section.
+    int max_radius = ceil(max_window/cell_size);
+    auto ZIlocal = ZImin;
+    for (int radius = 1; radius <= max_radius; ++radius)
+    {
+        log()->get(LogLevel::Debug) << "Radius = " << radius << std::endl;
+
+        // On the first iteration, the minimum surface (ZImin) is opened using a
+        // disk-shaped structuring element with a radius of one pixel.
+        auto mo = matrixOpen(ZIlocal, radius);
+
+        // An elevation threshold is then calculated, where the value is equal
+        // to the supplied slope tolerance parameter multiplied by the product
+        // of the window radius and the cell size. For example, if the user
+        // supplied a slope tolerance parameter of 15%, a cell size of 2m per
+        // pixel, the elevation threshold would be 0.3m at a window of one pixel
+        // (0.15 ? 1 ? 2).
+        double threshold = slope * cell_size * radius;
+
+        // This elevation threshold is applied to the difference of the minimum
+        // and the opened surfaces.
+        auto diff = ZIlocal - mo;
+
+        // Any grid cell with a difference value exceeding the calculated
+        // elevation threshold for the iteration is then flagged as an OBJ cell.
+        for (int i = 0; i < diff.size(); ++i)
+        {
+            if (diff(i) > threshold)
+                Obj(i) = 1;
+        }
+        // writeMatrix(Obj, "obj.tif", m_cellSize, view);
+
+        // The algorithm then proceeds to the next window radius (up to the
+        // maximum), and proceeds as above with the last opened surface acting
+        // as the ‘‘minimum surface’’ for the next difference calculation.
+        ZIlocal = mo;
+    }
+    
+    return Obj;
+}
+
+double SMRFilter::interp2(int r, int c, MatrixXd cx, MatrixXd cy, MatrixXd cz)
+{
+    log()->get(LogLevel::Debug) << "Reticulating splines...\n";
+
+            // Further optimizations are achieved by estimating only the
+            // interpolated surface within a local neighbourhood (e.g. a 7 x 7
+            // neighbourhood is used in our case) of the cell being filtered.
+            int radius = 3;
+
+            int cs = clamp(c-radius, 0, m_numCols-1);
+            int ce = clamp(c+radius, 0, m_numCols-1);
+            int col_size = ce - cs + 1;
+            int rs = clamp(r-radius, 0, m_numRows-1);
+            int re = clamp(r+radius, 0, m_numRows-1);
+            int row_size = re - rs + 1;
+
+            MatrixXd Xn = cx.block(rs, cs, row_size, col_size);
+            MatrixXd Yn = cy.block(rs, cs, row_size, col_size);
+            MatrixXd Hn = cz.block(rs, cs, row_size, col_size);
+
+            int nsize = Hn.size();
+            VectorXd T = VectorXd::Zero(nsize);
+            MatrixXd P = MatrixXd::Zero(nsize, 3);
+            MatrixXd K = MatrixXd::Zero(nsize, nsize);
+
+            int numK(0);
+            for (auto id = 0; id < Hn.size(); ++id)
+            {
+                double xj = Xn(id);
+                double yj = Yn(id);
+                double zj = Hn(id);
+                if (std::isnan(zj))
+                    continue;
+                numK++;
+                T(id) = zj;
+                P.row(id) << 1, xj, yj;
+                for (auto id2 = 0; id2 < Hn.size(); ++id2)
+                {
+                    if (id == id2)
+                        continue;
+                    double xk = Xn(id2);
+                    double yk = Yn(id2);
+                    double rsqr = (xj - xk) * (xj - xk) + (yj - yk) * (yj - yk);
+                    if (rsqr == 0.0)
+                        continue;
+                    K(id, id2) = rsqr * std::log10(std::sqrt(rsqr));
+                }
+            }
+            
+            // if (numK < 20)
+            //     continue;
+            
+            MatrixXd A = MatrixXd::Zero(nsize+3, nsize+3);
+            A.block(0,0,nsize,nsize) = K;
+            A.block(0,nsize,nsize,3) = P;
+            A.block(nsize,0,3,nsize) = P.transpose();
+
+            VectorXd b = VectorXd::Zero(nsize+3);
+            b.head(nsize) = T;
+
+            VectorXd x = A.fullPivHouseholderQr().solve(b);
+
+            Vector3d a = x.tail(3);
+            VectorXd w = x.head(nsize);
+
+            double sum = 0.0;
+            double xi2 = cx(r, c);
+            double yi2 = cy(r, c);
+            for (auto j = 0; j < nsize; ++j)
+            {
+                double xj = Xn(j);
+                double yj = Yn(j);
+                double rsqr = (xj - xi2) * (xj - xi2) + (yj - yi2) * (yj - yi2);
+                if (rsqr == 0.0)
+                    continue;
+                sum += w(j) * rsqr * std::log10(std::sqrt(rsqr));
+            }
+
+            return a(0) + a(1)*xi2 + a(2)*yi2 + sum;
+
+            // std::cerr << std::fixed;
+            // std::cerr << std::setprecision(3)
+            //           << std::left
+            //           << "S(" << r << "," << c << "): "
+            //           << std::setw(10)
+            //           << S(r, c)
+            //           // << std::setw(3)
+            //           // << "\tz: "
+            //           // << std::setw(10)
+            //           // << zi
+            //           // << std::setw(7)
+            //           // << "\tzdiff: "
+            //           // << std::setw(5)
+            //           // << zi - S(r, c)
+            //           // << std::setw(7)
+            //           // << "\txdiff: "
+            //           // << std::setw(5)
+            //           // << xi2 - xi
+            //           // << std::setw(7)
+            //           // << "\tydiff: "
+            //           // << std::setw(5)
+            //           // << yi2 - yi
+            //           << std::setw(7)
+            //           << "\t# pts: "
+            //           << std::setw(3)
+            //           << nsize
+            //           << std::setw(5)
+            //           << "\tsum: "
+            //           << std::setw(10)
+            //           << sum
+            //           << std::setw(9)
+            //           << "\tw.sum(): "
+            //           << std::setw(5)
+            //           << w.sum()
+            //           << std::setw(6)
+            //           << "\txsum: "
+            //           << std::setw(5)
+            //           << w.dot(P.col(1))
+            //           << std::setw(6)
+            //           << "\tysum: "
+            //           << std::setw(5)
+            //           << w.dot(P.col(2))
+            //           << std::setw(3)
+            //           << "\ta: "
+            //           << std::setw(8)
+            //           << a.transpose()
+            //           << std::endl;
 }
 
 std::vector<PointId> SMRFilter::processGround(PointViewPtr view)
@@ -357,6 +522,28 @@ std::vector<PointId> SMRFilter::processGround(PointViewPtr view)
     std::vector<PointId> groundIdx;
     view->calculateBounds(m_bounds);
 
+    double extent_x = floor(m_bounds.maxx) - ceil(m_bounds.minx);
+    double extent_y = floor(m_bounds.maxy) - ceil(m_bounds.miny);
+
+    m_numCols = static_cast<int>(ceil(extent_x/m_cellSize)) + 1;
+    m_numRows = static_cast<int>(ceil(extent_y/m_cellSize)) + 1;
+    m_maxRow = m_bounds.miny + m_numRows * m_cellSize;
+
+    MatrixXd cx(m_numRows, m_numCols);
+    cx.setConstant(std::numeric_limits<double>::quiet_NaN());
+
+    MatrixXd cy(m_numRows, m_numCols);
+    cy.setConstant(std::numeric_limits<double>::quiet_NaN());
+
+    for (auto c = 0; c < m_numCols; ++c)
+    {
+        for (auto r = 0; r < m_numRows; ++r)
+        {
+            cx(r, c) = m_bounds.minx + (c + 0.5) * m_cellSize;
+            cy(r, c) = m_bounds.miny + (r + 0.5) * m_cellSize;
+        }
+    }
+    
     // STEP 1:
 
     // As with many other ground filtering algorithms, the first step is
@@ -395,77 +582,7 @@ std::vector<PointId> SMRFilter::processGround(PointViewPtr view)
     // these latter techniques were nearly the same with regards to total error,
     // with the spring technique performing slightly better than the k-nearest
     // neighbor (KNN) approach.
-
-    double extent_x = floor(m_bounds.maxx) - ceil(m_bounds.minx);
-    double extent_y = floor(m_bounds.maxy) - ceil(m_bounds.miny);
-
-    m_numCols = static_cast<int>(ceil(extent_x/m_cellSize)) + 1;
-    m_numRows = static_cast<int>(ceil(extent_y/m_cellSize)) + 1;
-    m_maxRow = m_bounds.miny + m_numRows * m_cellSize;
-
-    MatrixXd ZImin(m_numRows, m_numCols);
-    ZImin.setConstant(std::numeric_limits<double>::quiet_NaN());
-
-    MatrixXd cx(m_numRows, m_numCols);
-    cx.setConstant(std::numeric_limits<double>::quiet_NaN());
-
-    MatrixXd cy(m_numRows, m_numCols);
-    cy.setConstant(std::numeric_limits<double>::quiet_NaN());
-
-    for (auto c = 0; c < m_numCols; ++c)
-    {
-        for (auto r = 0; r < m_numRows; ++r)
-        {
-            cx(r, c) = m_bounds.minx + (c + 0.5) * m_cellSize;
-            cy(r, c) = m_bounds.miny + (r + 0.5) * m_cellSize;
-        }
-    }
-
-    for (PointId i = 0; i < np; ++i)
-    {
-        using namespace Dimension;
-
-        double x = view->getFieldAs<double>(Id::X, i);
-        double y = view->getFieldAs<double>(Id::Y, i);
-        double z = view->getFieldAs<double>(Id::Z, i);
-
-        int c = clamp(getColIndex(x, m_cellSize), 0, m_numCols-1);
-        int r = clamp(getRowIndex(y, m_cellSize), 0, m_numRows-1);
-
-        if (z < ZImin(r, c) || std::isnan(ZImin(r, c)))
-        {
-            ZImin(r, c) = z;
-        }
-    }
-    writeMatrix(ZImin, "zimin.tif", m_cellSize, view);
-
-    if (m_inpaint)
-    {
-        // auto ZImin_painted = inpaint(ZImin);
-        auto ZImin_painted = TPS(cx, cy, ZImin);
-        writeMatrix(ZImin_painted, "zimin_painted.tif", m_cellSize, view);
-
-        ZImin = ZImin_painted;
-    }
-    
-    // // In our case, 2D structural elements of circular shape are employed and
-    // // sufficient accuracy is achieved by using a larger window size for opening
-    // // (W11) than for closing (W9).
-    // MatrixXd mo = matrixOpen(ZImin, 11);
-    // writeMatrix(mo, "zimin_open.tif", m_cellSize, view);
-    // MatrixXd mc = matrixClose(mo, 9);
-    // writeMatrix(mc, "zimin_close.tif", m_cellSize, view);
-    // 
-    // // ...in order to minimize the distortions caused by such filtering, the
-    // // output points ... are compared to C and only ci with significantly lower
-    // // elevation [are] replaced... In our case, d = 1.0 m was used.
-    // for (auto i = 0; i < ZImin.size(); ++i)
-    // {
-    //     if ((mc(i) - ZImin(i)) >= 0.3)
-    //     // if (ZImin(i) < mc(i))
-    //         ZImin(i) = mc(i);
-    // }
-    // writeMatrix(ZImin, "zimin_replace_low.tif", m_cellSize, view);
+    MatrixXd ZImin = createDSM(cx, cy, view);
 
     // STEP 2:
 
@@ -481,60 +598,16 @@ std::vector<PointId> SMRFilter::processGround(PointViewPtr view)
     // illustrates an opening operation on a cross section of a transect from
     // Sample 1–1 in the ISPRS LIDAR reference dataset (Sithole and Vosselman,
     // 2003), following Zhang et al. (2003).
-
-    MatrixXi Obj(m_numRows, m_numCols);
-    Obj.setZero();
-
-    // In this case, we selected a disk-shaped structuring element, and the
-    // radius of the element at each step was increased by one pixel from a
-    // starting value of one pixel to the pixel equivalent of the maximum value
-    // (wkmax). The maximum window radius is supplied as a distance metric
-    // (e.g., 21 m), but is internally converted to a pixel equivalent by
-    // dividing it by the cell size and rounding the result toward positive
-    // infinity (i.e., taking the ceiling value). For example, for a supplied
-    // maximum window radius of 21 m, and a cell size of 2m per pixel, the
-    // result would be a maximum window radius of 11 pixels. While this
-    // represents a relatively slow progression in the expansion of the window
-    // radius, we believe that the high efficiency associated with the opening
-    // operation mitigates the potential for computational waste. The
-    // improvements in classification accuracy using slow, linear progressions
-    // are documented in the next section.
-    int max_radius = ceil(m_maxWindow/m_cellSize);
-    auto ZIlocal = ZImin;
-    for (int radius = 1; radius < max_radius; ++radius)
-    {
-        log()->get(LogLevel::Debug) << "Radius = " << radius << std::endl;
-
-        // On the first iteration, the minimum surface (ZImin) is opened using a
-        // disk-shaped structuring element with a radius of one pixel.
-        auto mo = matrixOpen(ZIlocal, radius);
-
-        // An elevation threshold is then calculated, where the value is equal
-        // to the supplied slope tolerance parameter multiplied by the product
-        // of the window radius and the cell size. For example, if the user
-        // supplied a slope tolerance parameter of 15%, a cell size of 2m per
-        // pixel, the elevation threshold would be 0.3m at a window of one pixel
-        // (0.15 ? 1 ? 2).
-        double threshold = m_percentSlope * m_cellSize * radius;
-
-        // This elevation threshold is applied to the difference of the minimum
-        // and the opened surfaces.
-        auto diff = ZIlocal - mo;
-
-        // Any grid cell with a difference value exceeding the calculated
-        // elevation threshold for the iteration is then flagged as an OBJ cell.
-        for (int i = 0; i < diff.size(); ++i)
-        {
-            if (diff(i) > threshold)
-                Obj(i) = 1;
-        }
-        // writeMatrix(Obj, "obj.tif", m_cellSize, view);
-
-        // The algorithm then proceeds to the next window radius (up to the
-        // maximum), and proceeds as above with the last opened surface acting
-        // as the ‘‘minimum surface’’ for the next difference calculation.
-        ZIlocal = mo;
-    }
+    
+    // paper has low point happening later, i guess it doesn't matter too much, this is where he does it in matlab code
+    MatrixXi Low = progressiveFilter(-ZImin, m_cellSize, 5.0, 1.0);    
+    writeMatrix(Low.cast<double>(), "zilow.tif", m_cellSize, view);
+    
+    // matlab code has net cutting occurring here
+    
+    // and finally object detection
+    MatrixXi Obj = progressiveFilter(ZImin, m_cellSize, m_percentSlope, m_maxWindow);    
+    writeMatrix(Obj.cast<double>(), "ziobj.tif", m_cellSize, view);
 
     // STEP 3:
 
@@ -545,10 +618,11 @@ std::vector<PointId> SMRFilter::processGround(PointViewPtr view)
     // according to the same process described previously, producing a
     // provisional DEM (ZIpro).
 
+    // we currently aren't checking for net cells or empty cells (haven't i already marked empty cells as NaNs?)
     MatrixXd ZIpro = ZImin;
     for (int i = 0; i < Obj.size(); ++i)
     {
-        if (Obj(i) == 1)
+        if (Obj(i) == 1 || Low(i) == 1)
             ZIpro(i) = std::numeric_limits<double>::quiet_NaN();
     }
     writeMatrix(ZIpro, "zipro.tif", m_cellSize, view);
@@ -619,6 +693,41 @@ std::vector<PointId> SMRFilter::processGround(PointViewPtr view)
     // include this portion of the algorithm in the formal testing procedure,
     // though we provide a brief analysis of the effect of using this net filter
     // in the next section.
+    
+    auto diffX = [&](MatrixXd mat)
+    {
+        MatrixXd data = padMatrix(mat, 1);
+        MatrixXd data2 = data.rightCols(data.cols()-1) - data.leftCols(data.cols()-1);
+        return data2.block(1, 1, mat.rows(), mat.cols());
+        // return mat.rightCols(mat.cols()-1) - mat.leftCols(mat.cols()-1);
+    };
+    
+    auto diffY = [&](MatrixXd mat)
+    {
+        MatrixXd data = padMatrix(mat, 1);
+        MatrixXd data2 = data.bottomRows(data.rows()-1) - data.topRows(data.rows()-1);
+        return data2.block(1, 1, mat.rows(), mat.cols());
+        // return mat.bottomRows(mat.rows()-1) - mat.topRows(mat.rows()-1);
+    };
+    
+    MatrixXd gx = diffX(ZIpro / m_cellSize);
+        writeMatrix(gx, "gx.tif", m_cellSize, view);
+    MatrixXd gy = diffY(ZIpro / m_cellSize);
+        writeMatrix(gy, "gy.tif", m_cellSize, view);
+    writeMatrix(gx.cwiseProduct(gx), "gx2.tif", m_cellSize, view);
+    writeMatrix(gy.cwiseProduct(gy), "gy2.tif", m_cellSize, view);
+    writeMatrix(gx.cwiseProduct(gx)+gy.cwiseProduct(gy), "gxgy.tif", m_cellSize, view);
+    MatrixXd gsurfs = (gx.cwiseProduct(gx) + gy.cwiseProduct(gy)).cwiseSqrt();
+        writeMatrix(gsurfs, "gsurfs.tif", m_cellSize, view);
+    
+    std::cerr << gx.rows() << "\t" << gx.cols() << std::endl;
+    std::cerr << gy.rows() << "\t" << gy.cols() << std::endl;
+    std::cerr << gsurfs.rows() << "\t" << gsurfs.cols() << std::endl;
+    std::cerr << gx.minCoeff() << "\t" << gx.maxCoeff() << std::endl;
+    std::cerr << gy.minCoeff() << "\t" << gy.maxCoeff() << std::endl;
+    std::cerr << (gx.cwiseProduct(gx)).minCoeff() << "\t" << (gx.cwiseProduct(gx)).maxCoeff() << std::endl;
+    std::cerr << (gy.cwiseProduct(gy)).minCoeff() << "\t" << (gy.cwiseProduct(gy)).maxCoeff() << std::endl;
+    std::cerr << (gx.cwiseProduct(gx)+gy.cwiseProduct(gy)).minCoeff() << "\t" << (gx.cwiseProduct(gx)+gy.cwiseProduct(gy)).maxCoeff() << std::endl;
 
     for (PointId i = 0; i < np; ++i)
     {
@@ -630,12 +739,33 @@ std::vector<PointId> SMRFilter::processGround(PointViewPtr view)
         int c = clamp(getColIndex(x, m_cellSize), 0, m_numCols-1);
         int r = clamp(getRowIndex(y, m_cellSize), 0, m_numRows-1);
         
+        // author uses spline interpolation to get value from ZIpro and gsurfs
+        
         if (std::isnan(ZIpro(r, c)))
             continue;
-
-        double res = z - ZIpro(r, c);
-        if (res < m_threshold)
-            groundIdx.push_back(i);
+            
+        // not sure i should just brush this under the rug...
+        if (std::isnan(gsurfs(r, c)))
+            continue;
+            
+        // double ez = ZIpro(r, c);
+        // // double ez = interp2(r, c, cx, cy, ZIpro);
+        // double si = gsurfs(r, c);
+        // // double si = interp2(r, c, cx, cy, gsurfs);
+        // double reqVal = m_threshold + 1.2 * si;
+        // // std::cerr << ez << "\t"
+        // //           << z << "\t"
+        // //           << si << "\t"
+        // //           << reqVal << "\t"
+        // //           << std::abs(ez - z) << std::endl;
+        // 
+        // if (std::abs(ez - z) > reqVal)
+        //     continue;
+        
+        if (std::abs(ZIpro(r, c) - z) > m_threshold)
+            continue;
+            
+        groundIdx.push_back(i);
     }
 
     return groundIdx;

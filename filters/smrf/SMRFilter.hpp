@@ -83,7 +83,9 @@ private:
     int getRowIndex(double y, double cell_size);
     MatrixXd inpaint(MatrixXd data);
     MatrixXd matrixOpen(MatrixXd data, int radius);
-    MatrixXd matrixClose(MatrixXd data, int radius);
+    MatrixXd createDSM(MatrixXd const& cx, MatrixXd const& cy, PointViewPtr view);
+    MatrixXi progressiveFilter(MatrixXd const& ZImin, double cell_size, double slope, double max_window);
+    double interp2(int r, int c, MatrixXd cx, MatrixXd cy, MatrixXd cz);
     MatrixXd padMatrix(MatrixXd data, int radius);
     std::vector<PointId> processGround(PointViewPtr view);
     virtual PointViewSet run(PointViewPtr view);
