@@ -262,6 +262,66 @@ MatrixXd SMRFilter::matrixOpen(MatrixXd data, int radius)
     return maxZ.block(radius, radius, data.rows(), data.cols());
 }
 
+MatrixXd SMRFilter::matrixClose(MatrixXd data, int radius)
+{
+    using namespace Eigen;
+
+    MatrixXd data2 = padMatrix(data, radius);
+
+    int nrows = data2.rows();
+    int ncols = data2.cols();
+
+    // first min, then max of min
+    MatrixXd minZ = MatrixXd::Constant(nrows, ncols,
+                                       std::numeric_limits<double>::max());
+    MatrixXd maxZ = MatrixXd::Constant(nrows, ncols,
+                                       std::numeric_limits<double>::lowest());
+    for (auto c = 0; c < ncols; ++c)
+    {
+        for (auto r = 0; r < nrows; ++r)
+        {
+            int cs = clamp(c-radius, 0, ncols-1);
+            int ce = clamp(c+radius, 0, ncols-1);
+            int rs = clamp(r-radius, 0, nrows-1);
+            int re = clamp(r+radius, 0, nrows-1);
+
+            for (auto col = cs; col <= ce; ++col)
+            {
+                for (auto row = rs; row <= re; ++row)
+                {
+                    if ((row-r)*(row-r)+(col-c)*(col-c) > radius*radius)
+                        continue;
+                    if (data2(row, col) > maxZ(r, c))
+                        maxZ(r, c) = data2(row, col);
+                }
+            }
+        }
+    }
+    for (auto c = 0; c < ncols; ++c)
+    {
+        for (auto r = 0; r < nrows; ++r)
+        {
+            int cs = clamp(c-radius, 0, ncols-1);
+            int ce = clamp(c+radius, 0, ncols-1);
+            int rs = clamp(r-radius, 0, nrows-1);
+            int re = clamp(r+radius, 0, nrows-1);
+
+            for (auto col = cs; col <= ce; ++col)
+            {
+                for (auto row = rs; row <= re; ++row)
+                {
+                    if ((row-r)*(row-r)+(col-c)*(col-c) > radius*radius)
+                        continue;
+                    if (maxZ(row, col) < minZ(r, c))
+                        minZ(r, c) = maxZ(row, col);
+                }
+            }
+        }
+    }
+
+    return minZ.block(radius, radius, data.rows(), data.cols());
+}
+
 MatrixXd SMRFilter::padMatrix(MatrixXd data, int radius)
 {
     log()->get(LogLevel::Debug) << "Padding...\n";
@@ -387,6 +447,25 @@ std::vector<PointId> SMRFilter::processGround(PointViewPtr view)
 
         ZImin = ZImin_painted;
     }
+    
+    // // In our case, 2D structural elements of circular shape are employed and
+    // // sufficient accuracy is achieved by using a larger window size for opening
+    // // (W11) than for closing (W9).
+    // MatrixXd mo = matrixOpen(ZImin, 11);
+    // writeMatrix(mo, "zimin_open.tif", m_cellSize, view);
+    // MatrixXd mc = matrixClose(mo, 9);
+    // writeMatrix(mc, "zimin_close.tif", m_cellSize, view);
+    // 
+    // // ...in order to minimize the distortions caused by such filtering, the
+    // // output points ... are compared to C and only ci with significantly lower
+    // // elevation [are] replaced... In our case, d = 1.0 m was used.
+    // for (auto i = 0; i < ZImin.size(); ++i)
+    // {
+    //     if ((mc(i) - ZImin(i)) >= 0.3)
+    //     // if (ZImin(i) < mc(i))
+    //         ZImin(i) = mc(i);
+    // }
+    // writeMatrix(ZImin, "zimin_replace_low.tif", m_cellSize, view);
 
     // STEP 2:
 

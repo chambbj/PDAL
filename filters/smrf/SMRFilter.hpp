@@ -83,6 +83,7 @@ private:
     int getRowIndex(double y, double cell_size);
     MatrixXd inpaint(MatrixXd data);
     MatrixXd matrixOpen(MatrixXd data, int radius);
+    MatrixXd matrixClose(MatrixXd data, int radius);
     MatrixXd padMatrix(MatrixXd data, int radius);
     std::vector<PointId> processGround(PointViewPtr view);
     virtual PointViewSet run(PointViewPtr view);
