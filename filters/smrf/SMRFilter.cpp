@@ -93,7 +93,7 @@ int SMRFilter::getRowIndex(double y, double cell_size)
 
 // MatrixXd SMRFilter::inpaint(MatrixXd data)
 // {
-//     log()->get(LogLevel::Debug) << "Inpainting...\n";
+//     log()->get(LogLevel::Info) << "Inpainting...\n";
 //
 //     MatrixXd B = data;
 //     B.resize(data.size(), 1);
@@ -119,7 +119,7 @@ int SMRFilter::getRowIndex(double y, double cell_size)
 //     known_list.conservativeResize(kidx);
 //
 //     int nan_count = nan_list.rows();
-//     log()->get(LogLevel::Debug) << "Found " << nan_count << " NaN's\n";
+//     log()->get(LogLevel::Info) << "Found " << nan_count << " NaN's\n";
 //
 //     MatrixXi hv_list(4, 3);
 //     hv_list.row(0) <<           -1, -1,  0;
@@ -144,7 +144,7 @@ int SMRFilter::getRowIndex(double y, double cell_size)
 //             }
 //         }
 //     }
-//     log()->get(LogLevel::Debug) << "Identified " << hv_springs.size()
+//     log()->get(LogLevel::Info) << "Identified " << hv_springs.size()
 //                                 << " unique spring connections\n";
 //
 //     // build sparse matrix of connections
@@ -316,6 +316,8 @@ MatrixXd SMRFilter::createDSM(MatrixXd const& cx, MatrixXd const& cy, PointViewP
 
 MatrixXi SMRFilter::progressiveFilter(MatrixXd const& ZImin, double cell_size, double slope, double max_window)
 {
+    log()->get(LogLevel::Info) << "Progressive filtering...\n";
+    
     MatrixXi Obj(m_numRows, m_numCols);
     Obj.setZero();
 
@@ -337,8 +339,6 @@ MatrixXi SMRFilter::progressiveFilter(MatrixXd const& ZImin, double cell_size, d
     auto ZIlocal = ZImin;
     for (int radius = 1; radius <= max_radius; ++radius)
     {
-        log()->get(LogLevel::Debug) << "progressiveFilters: Radius = " << radius << std::endl;
-
         // On the first iteration, the minimum surface (ZImin) is opened using a
         // disk-shaped structuring element with a radius of one pixel.
         auto mo = matrixOpen(ZIlocal, radius);
@@ -369,7 +369,8 @@ MatrixXi SMRFilter::progressiveFilter(MatrixXd const& ZImin, double cell_size, d
         // as the ‘‘minimum surface’’ for the next difference calculation.
         ZIlocal = mo;
 
-        log()->get(LogLevel::Debug) << "progressiveFilter: " << Obj.sum() << " object pixels\n";
+        log()->get(LogLevel::Info) << "progressiveFilter: Radius = " << radius
+                                   << ", " << Obj.sum() << " object pixels\n";
     }
 
     return Obj;
@@ -377,7 +378,7 @@ MatrixXi SMRFilter::progressiveFilter(MatrixXd const& ZImin, double cell_size, d
 
 // double SMRFilter::interp2(int r, int c, MatrixXd cx, MatrixXd cy, MatrixXd cz)
 // {
-//     log()->get(LogLevel::Debug) << "Reticulating splines...\n";
+//     log()->get(LogLevel::Info) << "Reticulating splines...\n";
 //
 //             // Further optimizations are achieved by estimating only the
 //             // interpolated surface within a local neighbourhood (e.g. a 7 x 7
@@ -506,7 +507,7 @@ MatrixXi SMRFilter::progressiveFilter(MatrixXd const& ZImin, double cell_size, d
 
 std::vector<PointId> SMRFilter::processGround(PointViewPtr view)
 {
-    log()->get(LogLevel::Debug) << "Running SMRF...\n";
+    log()->get(LogLevel::Info) << "Running SMRF...\n";
 
     // The algorithm consists of four conceptually distinct stages. The first is
     // the creation of the minimum surface (ZImin). The second is the processing
@@ -772,10 +773,10 @@ std::vector<PointId> SMRFilter::processGround(PointViewPtr view)
 
 PointViewSet SMRFilter::run(PointViewPtr view)
 {
-    bool logOutput = log()->getLevel() > LogLevel::Debug1;
-    if (logOutput)
-        log()->floatPrecision(8);
-    log()->get(LogLevel::Debug2) << "Process SMRFilter...\n";
+    // bool logOutput = log()->getLevel() > LogLevel::Debug1;
+    // if (logOutput)
+    //     log()->floatPrecision(8);
+    log()->get(LogLevel::Info) << "Process SMRFilter...\n";
 
     auto idx = processGround(view);
 
@@ -786,7 +787,7 @@ PointViewSet SMRFilter::run(PointViewPtr view)
 
         if (m_classify)
         {
-            log()->get(LogLevel::Debug2) << "Labeled " << idx.size() << " ground returns!\n";
+            log()->get(LogLevel::Info) << "Labeled " << idx.size() << " ground returns!\n";
 
             // set the classification label of ground returns as 2
             // (corresponding to ASPRS LAS specification)
@@ -800,7 +801,7 @@ PointViewSet SMRFilter::run(PointViewPtr view)
 
         if (m_extract)
         {
-            log()->get(LogLevel::Debug2) << "Extracted " << idx.size() << " ground returns!\n";
+            log()->get(LogLevel::Info) << "Extracted " << idx.size() << " ground returns!\n";
 
             // create new PointView containing only ground returns
             PointViewPtr output = view->makeNew();
@@ -816,10 +817,10 @@ PointViewSet SMRFilter::run(PointViewPtr view)
     else
     {
         if (idx.empty())
-            log()->get(LogLevel::Debug2) << "Filtered cloud has no ground returns!\n";
+            log()->get(LogLevel::Info) << "Filtered cloud has no ground returns!\n";
 
         if (!(m_classify || m_extract))
-            log()->get(LogLevel::Debug2) << "Must choose --classify or --extract\n";
+            log()->get(LogLevel::Info) << "Must choose --classify or --extract\n";
 
         // return the view buffer unchanged
         viewSet.insert(view);
@@ -830,7 +831,7 @@ PointViewSet SMRFilter::run(PointViewPtr view)
 
 MatrixXd SMRFilter::TPS(MatrixXd cx, MatrixXd cy, MatrixXd cz)
 {
-    log()->get(LogLevel::Debug) << "Reticulating splines...\n";
+    log()->get(LogLevel::Info) << "TPS: Reticulating splines...\n";
 
     MatrixXd S = cz;
 
@@ -975,7 +976,8 @@ MatrixXd SMRFilter::TPS(MatrixXd cx, MatrixXd cy, MatrixXd cz)
         }
     }
 
-    std::cerr << num_nan_detect << "\t" << num_nan_replace << std::endl;
+    // std::cerr << num_nan_detect << "\t" << num_nan_replace << std::endl;
+    log()->get(LogLevel::Info) << "TPS: Filled " << num_nan_replace << " of " << num_nan_detect << " holes (" << static_cast<double>(num_nan_replace)/static_cast<double>(num_nan_detect)*100.0 << "%)\n";
 
     return S;
 }
