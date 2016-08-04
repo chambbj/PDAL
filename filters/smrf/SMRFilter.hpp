@@ -77,19 +77,44 @@ private:
 
     virtual void addArgs(ProgramArgs& args);
     virtual void addDimensions(PointLayoutPtr layout);
+    
+    // clamp is used to help ensure that row and column indices remain
+    // within valid bounds.
     int clamp(int t, int min, int max);
+    
+    // createDSM returns a matrix with minimum Z values from the provided
+    // PointView.
+    MatrixXd createDSM(MatrixXd const& cx, MatrixXd const& cy,
+                       PointViewPtr view);
+                       
+    // getColIndex gets the corresponding column index for a given x.
     int getColIndex(double x, double cell_size);
+    
+    // getRowIndex gets the corresponding row index for a given y.
     int getRowIndex(double y, double cell_size);
-    // MatrixXd inpaint(MatrixXd data);
+    
+    // matrixOpen applies a morphological opening with the given radius.
     MatrixXd matrixOpen(MatrixXd data, int radius);
-    MatrixXd createDSM(MatrixXd const& cx, MatrixXd const& cy, PointViewPtr view);
-    MatrixXi progressiveFilter(MatrixXd const& ZImin, double cell_size, double slope, double max_window);
-    // double interp2(int r, int c, MatrixXd cx, MatrixXd cy, MatrixXd cz);
+    
+    // padMatrx pads the matrix symmetrically with given radius.
     MatrixXd padMatrix(MatrixXd data, int radius);
+    
+    // processGround implements the SMRF algorithm, returning a vector
+    // of ground indices.
     std::vector<PointId> processGround(PointViewPtr view);
+    
+    // progressiveFilter is the core of the SMRF algorithm.
+    MatrixXi progressiveFilter(MatrixXd const& ZImin, double cell_size,
+                               double slope, double max_window);
+                               
     virtual PointViewSet run(PointViewPtr view);
+    
+    // TPS returns an interpolated matrix using thin plate splines.
     MatrixXd TPS(MatrixXd cx, MatrixXd cy, MatrixXd cz);
-    void writeMatrix(MatrixXd data, std::string filename, double cell_size, PointViewPtr view);
+    
+    // writeMatrix writes out Eigen matrices to GeoTIFFs for debugging.
+    void writeMatrix(MatrixXd data, std::string filename,
+                     double cell_size, PointViewPtr view);
 
     SMRFilter& operator=(const SMRFilter&); // not implemented
     SMRFilter(const SMRFilter&); // not implemented
