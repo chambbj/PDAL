@@ -82,11 +82,6 @@ private:
     // within valid bounds.
     int clamp(int t, int min, int max);
 
-    // createDSM returns a matrix with minimum Z values from the provided
-    // PointView.
-    MatrixXd createDSM(PointViewPtr view, int rows, int cols,
-                       double cell_size);
-
     // getColIndex gets the corresponding column index for a given x.
     int getColIndex(double x, double cell_size);
 

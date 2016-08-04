@@ -34,6 +34,7 @@
 
 #include "SMRFilter.hpp"
 
+#include <pdal/Eigen.hpp>
 #include <pdal/pdal_macros.hpp>
 #include <pdal/PipelineManager.hpp>
 #include <buffer/BufferReader.hpp>
@@ -79,30 +80,6 @@ void SMRFilter::addDimensions(PointLayoutPtr layout)
 int SMRFilter::clamp(int t, int min, int max)
 {
     return ((t < min) ? min : ((t > max) ? max : t));
-}
-
-MatrixXd SMRFilter::createDSM(PointViewPtr view, int rows, int cols,
-                              double cell_size)
-{
-    MatrixXd ZImin(rows, cols);
-    ZImin.setConstant(std::numeric_limits<double>::quiet_NaN());
-
-    for (PointId i = 0; i < view->size(); ++i)
-    {
-        using namespace Dimension;
-
-        double x = view->getFieldAs<double>(Id::X, i);
-        double y = view->getFieldAs<double>(Id::Y, i);
-        double z = view->getFieldAs<double>(Id::Z, i);
-
-        int c = clamp(getColIndex(x, cell_size), 0, cols-1);
-        int r = clamp(getRowIndex(y, cell_size), 0, rows-1);
-
-        if (z < ZImin(r, c) || std::isnan(ZImin(r, c)))
-            ZImin(r, c) = z;
-    }
-
-    return ZImin;
 }
 
 int SMRFilter::getColIndex(double x, double cell_size)
@@ -261,7 +238,8 @@ std::vector<PointId> SMRFilter::processGround(PointViewPtr view)
     // these latter techniques were nearly the same with regards to total error,
     // with the spring technique performing slightly better than the k-nearest
     // neighbor (KNN) approach.
-    MatrixXd ZImin = createDSM(view, m_numRows, m_numCols, m_cellSize);
+    MatrixXd ZImin = createDSM(*view.get(), m_numRows, m_numCols, m_cellSize,
+                               m_bounds);
     writeMatrix(ZImin, "zimin.tif", m_cellSize, view);
     
     // auto ZImin_painted = inpaint(ZImin);
