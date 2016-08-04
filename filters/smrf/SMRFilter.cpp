@@ -277,12 +277,10 @@ MatrixXd SMRFilter::padMatrix(MatrixXd data, int radius)
 
 MatrixXd SMRFilter::createDSM(MatrixXd const& cx, MatrixXd const& cy, PointViewPtr view)
 {
-    point_count_t np(view->size());
-
     MatrixXd ZImin(m_numRows, m_numCols);
     ZImin.setConstant(std::numeric_limits<double>::quiet_NaN());
 
-    for (PointId i = 0; i < np; ++i)
+    for (PointId i = 0; i < view->size(); ++i)
     {
         using namespace Dimension;
 
@@ -512,7 +510,6 @@ std::vector<PointId> SMRFilter::processGround(PointViewPtr view)
     // identification of the original LIDAR points as either BE or OBJ based on
     // their relationship to the interpolated
 
-    point_count_t np(view->size());
     std::vector<PointId> groundIdx;
     view->calculateBounds(m_bounds);
 
@@ -704,7 +701,7 @@ std::vector<PointId> SMRFilter::processGround(PointViewPtr view)
     MatrixXd gsurfs = (gx.cwiseProduct(gx) + gy.cwiseProduct(gy)).cwiseSqrt();
     writeMatrix(gsurfs, "gsurfs.tif", m_cellSize, view);
 
-    for (PointId i = 0; i < np; ++i)
+    for (PointId i = 0; i < view->size(); ++i)
     {
         using namespace Dimension;
         double x = view->getFieldAs<double>(Id::X, i);
