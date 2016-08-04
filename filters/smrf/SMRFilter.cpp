@@ -94,7 +94,7 @@ int SMRFilter::getRowIndex(double y, double cell_size)
 
 MatrixXd SMRFilter::matrixOpen(MatrixXd data, int radius)
 {
-    auto data2 = padMatrix(data, radius);
+    MatrixXd data2 = padMatrix(data, radius);
 
     int nrows = data2.rows();
     int ncols = data2.cols();
@@ -242,8 +242,7 @@ std::vector<PointId> SMRFilter::processGround(PointViewPtr view)
                                m_bounds);
     writeMatrix(ZImin, "zimin.tif", m_cellSize, view);
     
-    // auto ZImin_painted = inpaint(ZImin);
-    auto ZImin_painted = TPS(cx, cy, ZImin);
+    MatrixXd ZImin_painted = TPS(cx, cy, ZImin);
     writeMatrix(ZImin_painted, "zimin_painted.tif", m_cellSize, view);
     
     ZImin = ZImin_painted;
@@ -316,8 +315,7 @@ std::vector<PointId> SMRFilter::processGround(PointViewPtr view)
     }
     writeMatrix(ZIpro, "zipro.tif", m_cellSize, view);
 
-    // auto ZIpro_painted = inpaint(ZIpro);
-    auto ZIpro_painted = TPS(cx, cy, ZIpro);
+    MatrixXd ZIpro_painted = TPS(cx, cy, ZIpro);
     writeMatrix(ZIpro_painted, "zipro_painted.tif", m_cellSize, view);
 
     ZIpro = ZIpro_painted;
@@ -385,7 +383,6 @@ std::vector<PointId> SMRFilter::processGround(PointViewPtr view)
         MatrixXd data = padMatrix(mat, 1);
         MatrixXd data2 = data.rightCols(data.cols()-1) - data.leftCols(data.cols()-1);
         return data2.block(1, 1, mat.rows(), mat.cols());
-        // return mat.rightCols(mat.cols()-1) - mat.leftCols(mat.cols()-1);
     };
 
     auto diffY = [&](MatrixXd mat)
@@ -393,7 +390,6 @@ std::vector<PointId> SMRFilter::processGround(PointViewPtr view)
         MatrixXd data = padMatrix(mat, 1);
         MatrixXd data2 = data.bottomRows(data.rows()-1) - data.topRows(data.rows()-1);
         return data2.block(1, 1, mat.rows(), mat.cols());
-        // return mat.bottomRows(mat.rows()-1) - mat.topRows(mat.rows()-1);
     };
 
     MatrixXd gx = diffX(ZIpro / m_cellSize);
@@ -463,12 +459,12 @@ MatrixXi SMRFilter::progressiveFilter(MatrixXd const& ZImin, double cell_size,
     // improvements in classification accuracy using slow, linear progressions
     // are documented in the next section.
     int max_radius = ceil(max_window/cell_size);
-    auto ZIlocal = ZImin;
+    MatrixXd ZIlocal = ZImin;
     for (int radius = 1; radius <= max_radius; ++radius)
     {
         // On the first iteration, the minimum surface (ZImin) is opened using a
         // disk-shaped structuring element with a radius of one pixel.
-        auto mo = matrixOpen(ZIlocal, radius);
+        MatrixXd mo = matrixOpen(ZIlocal, radius);
 
         // An elevation threshold is then calculated, where the value is equal
         // to the supplied slope tolerance parameter multiplied by the product
@@ -480,7 +476,7 @@ MatrixXi SMRFilter::progressiveFilter(MatrixXd const& ZImin, double cell_size,
 
         // This elevation threshold is applied to the difference of the minimum
         // and the opened surfaces.
-        auto diff = ZIlocal - mo;
+        MatrixXd diff = ZIlocal - mo;
 
         // Any grid cell with a difference value exceeding the calculated
         // elevation threshold for the iteration is then flagged as an OBJ cell.
@@ -507,7 +503,7 @@ PointViewSet SMRFilter::run(PointViewPtr view)
 {
     log()->get(LogLevel::Info) << "run: Process SMRFilter...\n";
 
-    auto idx = processGround(view);
+    std::vector<PointId> idx = processGround(view);
 
     PointViewSet viewSet;
 
