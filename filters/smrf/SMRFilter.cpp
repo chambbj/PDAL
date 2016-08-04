@@ -92,115 +92,115 @@ int SMRFilter::getRowIndex(double y, double cell_size)
     return static_cast<int>(floor((m_maxRow - y) / cell_size));
 }
 
-MatrixXd SMRFilter::inpaint(MatrixXd data)
-{
-    log()->get(LogLevel::Debug) << "Inpainting...\n";
-
-    MatrixXd B = data;
-    B.resize(data.size(), 1);
-
-    MatrixXi nan_list(data.size(), 3);
-    VectorXi known_list(data.size());
-
-    int nidx = 0, kidx = 0, nmidx = 0;
-
-    for (int c = 0; c < data.cols(); ++c)
-    {
-        for (int r = 0; r < data.rows(); ++r)
-        {
-            if (std::isnan(data(r, c)))
-                nan_list.row(nidx++) << nmidx, r, c;
-            else
-                known_list.row(kidx++) << nmidx;
-            nmidx++;
-        }
-    }
-
-    nan_list.conservativeResize(nidx, NoChange);
-    known_list.conservativeResize(kidx);
-
-    int nan_count = nan_list.rows();
-    log()->get(LogLevel::Debug) << "Found " << nan_count << " NaN's\n";
-
-    MatrixXi hv_list(4, 3);
-    hv_list.row(0) <<           -1, -1,  0;
-    hv_list.row(1) <<            1,  1,  0,
-                hv_list.row(2) << -data.rows(),  0, -1,
-                hv_list.row(3) <<  data.rows(),  0,  1;
-
-    std::map<int, int> hv_springs;
-    for (int i = 0; i < 4; ++i)
-    {
-        auto hvs = nan_list + hv_list.row(i).replicate(nan_count, 1);
-        for (int j = 0; j < hvs.rows(); ++j)
-        {
-            int r = hvs(j, 1);
-            int c = hvs(j, 2);
-            if (r >= 0 && r < data.rows() && c >=0 && c < data.cols())
-            {
-                if (nan_list(j, 0) < hvs(j, 0))
-                    hv_springs[nan_list(j, 0)] = hvs(j, 0);
-                else
-                    hv_springs[hvs(j, 0)] = nan_list(j, 0);
-            }
-        }
-    }
-    log()->get(LogLevel::Debug) << "Identified " << hv_springs.size()
-                                << " unique spring connections\n";
-
-    // build sparse matrix of connections
-    MatrixXi hv_springs2(hv_springs.size(), 2);
-    int sprow = 0;
-    for (auto it = hv_springs.begin(); it != hv_springs.end(); ++it)
-        hv_springs2.row(sprow++) << it->first, it->second;
-
-    SparseMatrix<double> springs(2*hv_springs2.rows(), data.size());
-    // SparseMatrix<double> springs(data.size(), data.size());
-    // std::vector<Triplet<double> > triplets(2*hv_springs.size());
-    std::vector<Triplet<double> > triplets;
-    triplets.reserve(2*hv_springs2.rows());
-    for (int i = 0; i < hv_springs2.rows(); ++i)
-    {
-        // triplets[2*i] = Triplet<double>(i+1, hv_springs2(i, 0), 1);
-        // triplets[2*i+1] = Triplet<double>(i+1, hv_springs2(i, 1), -1);
-        triplets.push_back(Triplet<double>(i+1, hv_springs2(i, 0), 1));
-        triplets.push_back(Triplet<double>(i+1, hv_springs2(i, 1), -1));
-    }
-    springs.setFromTriplets(triplets.begin(), triplets.end());
-    springs.makeCompressed();
-
-    SparseMatrix<double> known_springs(springs.rows(), known_list.size());
-    for (int i = 0; i < known_list.size(); ++i)
-        known_springs.col(i) = springs.col(known_list(i));
-    known_springs.makeCompressed();
-
-    // eliminate knowns
-    VectorXd knowns(known_list.size());
-    for (int i = 0; i < known_list.size(); ++i)
-        knowns(i) = data(known_list(i));
-
-    auto b = -known_springs * knowns;
-
-    SparseMatrix<double> nan_springs(springs.rows(), nan_count);
-    for (int i = 0; i < nan_count; ++i)
-        nan_springs.col(i) = springs.col(nan_list(i, 0));
-    nan_springs.makeCompressed();
-
-    // solve Ax=b, replace nans with interpolated values
-    SparseQR<SparseMatrix<double>, COLAMDOrdering<int> > solver;
-    solver.compute(nan_springs);
-    if (solver.info() != Success)
-        std::cerr << "Decomposition failed!\n";
-    VectorXd x = solver.solve(b);
-    if (solver.info() != Success)
-        std::cerr << "Solving failed\n";
-    std::cerr << (nan_springs*x-b).norm()/b.norm() << std::endl;
-
-    for (int i = 0; i < nan_count; ++i)
-        B(nan_list(i, 0)) = x(i);
-    B.resize(data.rows(), data.cols());
-    return B;
-}
+// MatrixXd SMRFilter::inpaint(MatrixXd data)
+// {
+//     log()->get(LogLevel::Debug) << "Inpainting...\n";
+// 
+//     MatrixXd B = data;
+//     B.resize(data.size(), 1);
+// 
+//     MatrixXi nan_list(data.size(), 3);
+//     VectorXi known_list(data.size());
+// 
+//     int nidx = 0, kidx = 0, nmidx = 0;
+// 
+//     for (int c = 0; c < data.cols(); ++c)
+//     {
+//         for (int r = 0; r < data.rows(); ++r)
+//         {
+//             if (std::isnan(data(r, c)))
+//                 nan_list.row(nidx++) << nmidx, r, c;
+//             else
+//                 known_list.row(kidx++) << nmidx;
+//             nmidx++;
+//         }
+//     }
+// 
+//     nan_list.conservativeResize(nidx, NoChange);
+//     known_list.conservativeResize(kidx);
+// 
+//     int nan_count = nan_list.rows();
+//     log()->get(LogLevel::Debug) << "Found " << nan_count << " NaN's\n";
+// 
+//     MatrixXi hv_list(4, 3);
+//     hv_list.row(0) <<           -1, -1,  0;
+//     hv_list.row(1) <<            1,  1,  0,
+//                 hv_list.row(2) << -data.rows(),  0, -1,
+//                 hv_list.row(3) <<  data.rows(),  0,  1;
+// 
+//     std::map<int, int> hv_springs;
+//     for (int i = 0; i < 4; ++i)
+//     {
+//         auto hvs = nan_list + hv_list.row(i).replicate(nan_count, 1);
+//         for (int j = 0; j < hvs.rows(); ++j)
+//         {
+//             int r = hvs(j, 1);
+//             int c = hvs(j, 2);
+//             if (r >= 0 && r < data.rows() && c >=0 && c < data.cols())
+//             {
+//                 if (nan_list(j, 0) < hvs(j, 0))
+//                     hv_springs[nan_list(j, 0)] = hvs(j, 0);
+//                 else
+//                     hv_springs[hvs(j, 0)] = nan_list(j, 0);
+//             }
+//         }
+//     }
+//     log()->get(LogLevel::Debug) << "Identified " << hv_springs.size()
+//                                 << " unique spring connections\n";
+// 
+//     // build sparse matrix of connections
+//     MatrixXi hv_springs2(hv_springs.size(), 2);
+//     int sprow = 0;
+//     for (auto it = hv_springs.begin(); it != hv_springs.end(); ++it)
+//         hv_springs2.row(sprow++) << it->first, it->second;
+// 
+//     SparseMatrix<double> springs(2*hv_springs2.rows(), data.size());
+//     // SparseMatrix<double> springs(data.size(), data.size());
+//     // std::vector<Triplet<double> > triplets(2*hv_springs.size());
+//     std::vector<Triplet<double> > triplets;
+//     triplets.reserve(2*hv_springs2.rows());
+//     for (int i = 0; i < hv_springs2.rows(); ++i)
+//     {
+//         // triplets[2*i] = Triplet<double>(i+1, hv_springs2(i, 0), 1);
+//         // triplets[2*i+1] = Triplet<double>(i+1, hv_springs2(i, 1), -1);
+//         triplets.push_back(Triplet<double>(i+1, hv_springs2(i, 0), 1));
+//         triplets.push_back(Triplet<double>(i+1, hv_springs2(i, 1), -1));
+//     }
+//     springs.setFromTriplets(triplets.begin(), triplets.end());
+//     springs.makeCompressed();
+// 
+//     SparseMatrix<double> known_springs(springs.rows(), known_list.size());
+//     for (int i = 0; i < known_list.size(); ++i)
+//         known_springs.col(i) = springs.col(known_list(i));
+//     known_springs.makeCompressed();
+// 
+//     // eliminate knowns
+//     VectorXd knowns(known_list.size());
+//     for (int i = 0; i < known_list.size(); ++i)
+//         knowns(i) = data(known_list(i));
+// 
+//     auto b = -known_springs * knowns;
+// 
+//     SparseMatrix<double> nan_springs(springs.rows(), nan_count);
+//     for (int i = 0; i < nan_count; ++i)
+//         nan_springs.col(i) = springs.col(nan_list(i, 0));
+//     nan_springs.makeCompressed();
+// 
+//     // solve Ax=b, replace nans with interpolated values
+//     SparseQR<SparseMatrix<double>, COLAMDOrdering<int> > solver;
+//     solver.compute(nan_springs);
+//     if (solver.info() != Success)
+//         std::cerr << "Decomposition failed!\n";
+//     VectorXd x = solver.solve(b);
+//     if (solver.info() != Success)
+//         std::cerr << "Solving failed\n";
+//     std::cerr << (nan_springs*x-b).norm()/b.norm() << std::endl;
+// 
+//     for (int i = 0; i < nan_count; ++i)
+//         B(nan_list(i, 0)) = x(i);
+//     B.resize(data.rows(), data.cols());
+//     return B;
+// }
 
 MatrixXd SMRFilter::matrixOpen(MatrixXd data, int radius)
 {
@@ -376,134 +376,134 @@ MatrixXi SMRFilter::progressiveFilter(MatrixXd const& ZImin, double cell_size, d
     return Obj;
 }
 
-double SMRFilter::interp2(int r, int c, MatrixXd cx, MatrixXd cy, MatrixXd cz)
-{
-    log()->get(LogLevel::Debug) << "Reticulating splines...\n";
-
-            // Further optimizations are achieved by estimating only the
-            // interpolated surface within a local neighbourhood (e.g. a 7 x 7
-            // neighbourhood is used in our case) of the cell being filtered.
-            int radius = 3;
-
-            int cs = clamp(c-radius, 0, m_numCols-1);
-            int ce = clamp(c+radius, 0, m_numCols-1);
-            int col_size = ce - cs + 1;
-            int rs = clamp(r-radius, 0, m_numRows-1);
-            int re = clamp(r+radius, 0, m_numRows-1);
-            int row_size = re - rs + 1;
-
-            MatrixXd Xn = cx.block(rs, cs, row_size, col_size);
-            MatrixXd Yn = cy.block(rs, cs, row_size, col_size);
-            MatrixXd Hn = cz.block(rs, cs, row_size, col_size);
-
-            int nsize = Hn.size();
-            VectorXd T = VectorXd::Zero(nsize);
-            MatrixXd P = MatrixXd::Zero(nsize, 3);
-            MatrixXd K = MatrixXd::Zero(nsize, nsize);
-
-            int numK(0);
-            for (auto id = 0; id < Hn.size(); ++id)
-            {
-                double xj = Xn(id);
-                double yj = Yn(id);
-                double zj = Hn(id);
-                if (std::isnan(zj))
-                    continue;
-                numK++;
-                T(id) = zj;
-                P.row(id) << 1, xj, yj;
-                for (auto id2 = 0; id2 < Hn.size(); ++id2)
-                {
-                    if (id == id2)
-                        continue;
-                    double xk = Xn(id2);
-                    double yk = Yn(id2);
-                    double rsqr = (xj - xk) * (xj - xk) + (yj - yk) * (yj - yk);
-                    if (rsqr == 0.0)
-                        continue;
-                    K(id, id2) = rsqr * std::log10(std::sqrt(rsqr));
-                }
-            }
-            
-            // if (numK < 20)
-            //     continue;
-            
-            MatrixXd A = MatrixXd::Zero(nsize+3, nsize+3);
-            A.block(0,0,nsize,nsize) = K;
-            A.block(0,nsize,nsize,3) = P;
-            A.block(nsize,0,3,nsize) = P.transpose();
-
-            VectorXd b = VectorXd::Zero(nsize+3);
-            b.head(nsize) = T;
-
-            VectorXd x = A.fullPivHouseholderQr().solve(b);
-
-            Vector3d a = x.tail(3);
-            VectorXd w = x.head(nsize);
-
-            double sum = 0.0;
-            double xi2 = cx(r, c);
-            double yi2 = cy(r, c);
-            for (auto j = 0; j < nsize; ++j)
-            {
-                double xj = Xn(j);
-                double yj = Yn(j);
-                double rsqr = (xj - xi2) * (xj - xi2) + (yj - yi2) * (yj - yi2);
-                if (rsqr == 0.0)
-                    continue;
-                sum += w(j) * rsqr * std::log10(std::sqrt(rsqr));
-            }
-
-            return a(0) + a(1)*xi2 + a(2)*yi2 + sum;
-
-            // std::cerr << std::fixed;
-            // std::cerr << std::setprecision(3)
-            //           << std::left
-            //           << "S(" << r << "," << c << "): "
-            //           << std::setw(10)
-            //           << S(r, c)
-            //           // << std::setw(3)
-            //           // << "\tz: "
-            //           // << std::setw(10)
-            //           // << zi
-            //           // << std::setw(7)
-            //           // << "\tzdiff: "
-            //           // << std::setw(5)
-            //           // << zi - S(r, c)
-            //           // << std::setw(7)
-            //           // << "\txdiff: "
-            //           // << std::setw(5)
-            //           // << xi2 - xi
-            //           // << std::setw(7)
-            //           // << "\tydiff: "
-            //           // << std::setw(5)
-            //           // << yi2 - yi
-            //           << std::setw(7)
-            //           << "\t# pts: "
-            //           << std::setw(3)
-            //           << nsize
-            //           << std::setw(5)
-            //           << "\tsum: "
-            //           << std::setw(10)
-            //           << sum
-            //           << std::setw(9)
-            //           << "\tw.sum(): "
-            //           << std::setw(5)
-            //           << w.sum()
-            //           << std::setw(6)
-            //           << "\txsum: "
-            //           << std::setw(5)
-            //           << w.dot(P.col(1))
-            //           << std::setw(6)
-            //           << "\tysum: "
-            //           << std::setw(5)
-            //           << w.dot(P.col(2))
-            //           << std::setw(3)
-            //           << "\ta: "
-            //           << std::setw(8)
-            //           << a.transpose()
-            //           << std::endl;
-}
+// double SMRFilter::interp2(int r, int c, MatrixXd cx, MatrixXd cy, MatrixXd cz)
+// {
+//     log()->get(LogLevel::Debug) << "Reticulating splines...\n";
+// 
+//             // Further optimizations are achieved by estimating only the
+//             // interpolated surface within a local neighbourhood (e.g. a 7 x 7
+//             // neighbourhood is used in our case) of the cell being filtered.
+//             int radius = 3;
+// 
+//             int cs = clamp(c-radius, 0, m_numCols-1);
+//             int ce = clamp(c+radius, 0, m_numCols-1);
+//             int col_size = ce - cs + 1;
+//             int rs = clamp(r-radius, 0, m_numRows-1);
+//             int re = clamp(r+radius, 0, m_numRows-1);
+//             int row_size = re - rs + 1;
+// 
+//             MatrixXd Xn = cx.block(rs, cs, row_size, col_size);
+//             MatrixXd Yn = cy.block(rs, cs, row_size, col_size);
+//             MatrixXd Hn = cz.block(rs, cs, row_size, col_size);
+// 
+//             int nsize = Hn.size();
+//             VectorXd T = VectorXd::Zero(nsize);
+//             MatrixXd P = MatrixXd::Zero(nsize, 3);
+//             MatrixXd K = MatrixXd::Zero(nsize, nsize);
+// 
+//             int numK(0);
+//             for (auto id = 0; id < Hn.size(); ++id)
+//             {
+//                 double xj = Xn(id);
+//                 double yj = Yn(id);
+//                 double zj = Hn(id);
+//                 if (std::isnan(zj))
+//                     continue;
+//                 numK++;
+//                 T(id) = zj;
+//                 P.row(id) << 1, xj, yj;
+//                 for (auto id2 = 0; id2 < Hn.size(); ++id2)
+//                 {
+//                     if (id == id2)
+//                         continue;
+//                     double xk = Xn(id2);
+//                     double yk = Yn(id2);
+//                     double rsqr = (xj - xk) * (xj - xk) + (yj - yk) * (yj - yk);
+//                     if (rsqr == 0.0)
+//                         continue;
+//                     K(id, id2) = rsqr * std::log10(std::sqrt(rsqr));
+//                 }
+//             }
+//             
+//             // if (numK < 20)
+//             //     continue;
+//             
+//             MatrixXd A = MatrixXd::Zero(nsize+3, nsize+3);
+//             A.block(0,0,nsize,nsize) = K;
+//             A.block(0,nsize,nsize,3) = P;
+//             A.block(nsize,0,3,nsize) = P.transpose();
+// 
+//             VectorXd b = VectorXd::Zero(nsize+3);
+//             b.head(nsize) = T;
+// 
+//             VectorXd x = A.fullPivHouseholderQr().solve(b);
+// 
+//             Vector3d a = x.tail(3);
+//             VectorXd w = x.head(nsize);
+// 
+//             double sum = 0.0;
+//             double xi2 = cx(r, c);
+//             double yi2 = cy(r, c);
+//             for (auto j = 0; j < nsize; ++j)
+//             {
+//                 double xj = Xn(j);
+//                 double yj = Yn(j);
+//                 double rsqr = (xj - xi2) * (xj - xi2) + (yj - yi2) * (yj - yi2);
+//                 if (rsqr == 0.0)
+//                     continue;
+//                 sum += w(j) * rsqr * std::log10(std::sqrt(rsqr));
+//             }
+// 
+//             return a(0) + a(1)*xi2 + a(2)*yi2 + sum;
+// 
+//             // std::cerr << std::fixed;
+//             // std::cerr << std::setprecision(3)
+//             //           << std::left
+//             //           << "S(" << r << "," << c << "): "
+//             //           << std::setw(10)
+//             //           << S(r, c)
+//             //           // << std::setw(3)
+//             //           // << "\tz: "
+//             //           // << std::setw(10)
+//             //           // << zi
+//             //           // << std::setw(7)
+//             //           // << "\tzdiff: "
+//             //           // << std::setw(5)
+//             //           // << zi - S(r, c)
+//             //           // << std::setw(7)
+//             //           // << "\txdiff: "
+//             //           // << std::setw(5)
+//             //           // << xi2 - xi
+//             //           // << std::setw(7)
+//             //           // << "\tydiff: "
+//             //           // << std::setw(5)
+//             //           // << yi2 - yi
+//             //           << std::setw(7)
+//             //           << "\t# pts: "
+//             //           << std::setw(3)
+//             //           << nsize
+//             //           << std::setw(5)
+//             //           << "\tsum: "
+//             //           << std::setw(10)
+//             //           << sum
+//             //           << std::setw(9)
+//             //           << "\tw.sum(): "
+//             //           << std::setw(5)
+//             //           << w.sum()
+//             //           << std::setw(6)
+//             //           << "\txsum: "
+//             //           << std::setw(5)
+//             //           << w.dot(P.col(1))
+//             //           << std::setw(6)
+//             //           << "\tysum: "
+//             //           << std::setw(5)
+//             //           << w.dot(P.col(2))
+//             //           << std::setw(3)
+//             //           << "\ta: "
+//             //           << std::setw(8)
+//             //           << a.transpose()
+//             //           << std::endl;
+// }
 
 std::vector<PointId> SMRFilter::processGround(PointViewPtr view)
 {
@@ -711,24 +711,12 @@ std::vector<PointId> SMRFilter::processGround(PointViewPtr view)
     };
     
     MatrixXd gx = diffX(ZIpro / m_cellSize);
-        writeMatrix(gx, "gx.tif", m_cellSize, view);
+    writeMatrix(gx, "gx.tif", m_cellSize, view);
     MatrixXd gy = diffY(ZIpro / m_cellSize);
-        writeMatrix(gy, "gy.tif", m_cellSize, view);
-    writeMatrix(gx.cwiseProduct(gx), "gx2.tif", m_cellSize, view);
-    writeMatrix(gy.cwiseProduct(gy), "gy2.tif", m_cellSize, view);
-    writeMatrix(gx.cwiseProduct(gx)+gy.cwiseProduct(gy), "gxgy.tif", m_cellSize, view);
+    writeMatrix(gy, "gy.tif", m_cellSize, view);
     MatrixXd gsurfs = (gx.cwiseProduct(gx) + gy.cwiseProduct(gy)).cwiseSqrt();
-        writeMatrix(gsurfs, "gsurfs.tif", m_cellSize, view);
+    writeMatrix(gsurfs, "gsurfs.tif", m_cellSize, view);
     
-    std::cerr << gx.rows() << "\t" << gx.cols() << std::endl;
-    std::cerr << gy.rows() << "\t" << gy.cols() << std::endl;
-    std::cerr << gsurfs.rows() << "\t" << gsurfs.cols() << std::endl;
-    std::cerr << gx.minCoeff() << "\t" << gx.maxCoeff() << std::endl;
-    std::cerr << gy.minCoeff() << "\t" << gy.maxCoeff() << std::endl;
-    std::cerr << (gx.cwiseProduct(gx)).minCoeff() << "\t" << (gx.cwiseProduct(gx)).maxCoeff() << std::endl;
-    std::cerr << (gy.cwiseProduct(gy)).minCoeff() << "\t" << (gy.cwiseProduct(gy)).maxCoeff() << std::endl;
-    std::cerr << (gx.cwiseProduct(gx)+gy.cwiseProduct(gy)).minCoeff() << "\t" << (gx.cwiseProduct(gx)+gy.cwiseProduct(gy)).maxCoeff() << std::endl;
-
     for (PointId i = 0; i < np; ++i)
     {
         using namespace Dimension;
@@ -753,11 +741,6 @@ std::vector<PointId> SMRFilter::processGround(PointViewPtr view)
         double si = gsurfs(r, c);
         // double si = interp2(r, c, cx, cy, gsurfs);
         double reqVal = m_threshold + 1.2 * si;
-        // std::cerr << ez << "\t"
-        //           << z << "\t"
-        //           << si << "\t"
-        //           << reqVal << "\t"
-        //           << std::abs(ez - z) << std::endl;
         
         if (std::abs(ez - z) > reqVal)
             continue;
@@ -979,40 +962,6 @@ MatrixXd SMRFilter::TPS(MatrixXd cx, MatrixXd cy, MatrixXd cz)
     std::cerr << num_nan_detect << "\t" << num_nan_replace << std::endl;
 
     return S;
-}
-
-void SMRFilter::writeControl(MatrixXd cx, MatrixXd cy, MatrixXd cz, std::string filename)
-{
-    using namespace Dimension;
-
-    PipelineManager m;
-
-    PointTable table;
-    PointViewPtr view(new PointView(table));
-
-    table.layout()->registerDim(Id::X);
-    table.layout()->registerDim(Id::Y);
-    table.layout()->registerDim(Id::Z);
-
-    PointId i = 0;
-    for (int j = 0; j < cz.size(); ++j)
-    {
-        if (std::isnan(cx(j)) || std::isnan(cy(j)))
-            continue;
-        if (cz(j) == std::numeric_limits<double>::max())
-            continue;
-        view->setField(Id::X, i, cx(j));
-        view->setField(Id::Y, i, cy(j));
-        view->setField(Id::Z, i, cz(j));
-        i++;
-    }
-
-    BufferReader r;
-    r.addView(view);
-
-    Stage& w = m.makeWriter(filename, "writers.las", r);
-    w.prepare(table);
-    w.execute(table);
 }
 
 void SMRFilter::writeMatrix(MatrixXd data, std::string filename, double cell_size, PointViewPtr view)
