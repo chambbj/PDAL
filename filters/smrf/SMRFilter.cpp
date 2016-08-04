@@ -81,7 +81,8 @@ int SMRFilter::clamp(int t, int min, int max)
     return ((t < min) ? min : ((t > max) ? max : t));
 }
 
-MatrixXd SMRFilter::createDSM(MatrixXd const& cx, MatrixXd const& cy, PointViewPtr view)
+MatrixXd SMRFilter::createDSM(MatrixXd const& cx, MatrixXd const& cy,
+                              PointViewPtr view)
 {
     MatrixXd ZImin(m_numRows, m_numCols);
     ZImin.setConstant(std::numeric_limits<double>::quiet_NaN());
@@ -463,10 +464,11 @@ std::vector<PointId> SMRFilter::processGround(PointViewPtr view)
     return groundIdx;
 }
 
-MatrixXi SMRFilter::progressiveFilter(MatrixXd const& ZImin, double cell_size, double slope, double max_window)
+MatrixXi SMRFilter::progressiveFilter(MatrixXd const& ZImin, double cell_size,
+                                      double slope, double max_window)
 {
     log()->get(LogLevel::Info) << "progressiveFilter: Progressive filtering...\n";
-    
+
     MatrixXi Obj(m_numRows, m_numCols);
     Obj.setZero();
 
@@ -727,12 +729,17 @@ MatrixXd SMRFilter::TPS(MatrixXd cx, MatrixXd cy, MatrixXd cz)
         }
     }
 
-    log()->get(LogLevel::Info) << "TPS: Filled " << num_nan_replace << " of " << num_nan_detect << " holes (" << static_cast<double>(num_nan_replace)/static_cast<double>(num_nan_detect)*100.0 << "%)\n";
+    double frac = static_cast<double>(num_nan_replace);
+    frac /= static_cast<double>(num_nan_detect);
+    log()->get(LogLevel::Info) << "TPS: Filled " << num_nan_replace << " of "
+                               << num_nan_detect << " holes ("
+                               << frac * 100.0 << "%)\n";
 
     return S;
 }
 
-void SMRFilter::writeMatrix(MatrixXd data, std::string filename, double cell_size, PointViewPtr view)
+void SMRFilter::writeMatrix(MatrixXd data, std::string filename,
+                            double cell_size, PointViewPtr view)
 {
     int cols = data.cols();
     int rows = data.rows();
