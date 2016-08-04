@@ -66,7 +66,6 @@ public:
 private:
     bool m_classify;
     bool m_extract;
-    bool m_inpaint;
     int m_numRows;
     int m_numCols;
     int m_maxRow;

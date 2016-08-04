@@ -65,7 +65,6 @@ void SMRFilter::addArgs(ProgramArgs& args)
 {
     args.add("classify", "Apply classification labels?", m_classify, true);
     args.add("extract", "Extract ground returns?", m_extract);
-    args.add("inpaint", "Inpaint?", m_inpaint, false);
     args.add("cell", "Cell size?", m_cellSize, 1.0);
     args.add("slope", "Slope?", m_percentSlope, 0.15);
     args.add("window", "Max window size?", m_maxWindow, 21.0);
@@ -204,8 +203,6 @@ int SMRFilter::getRowIndex(double y, double cell_size)
 
 MatrixXd SMRFilter::matrixOpen(MatrixXd data, int radius)
 {
-    log()->get(LogLevel::Debug) << "Opening...\n";
-
     auto data2 = padMatrix(data, radius);
 
     int nrows = data2.rows();
@@ -264,8 +261,6 @@ MatrixXd SMRFilter::matrixOpen(MatrixXd data, int radius)
 
 MatrixXd SMRFilter::padMatrix(MatrixXd data, int radius)
 {
-    log()->get(LogLevel::Debug) << "Padding...\n";
-
     MatrixXd data2 = MatrixXd::Zero(data.rows()+2*radius, data.cols()+2*radius);
     data2.block(radius, radius, data.rows(), data.cols()) = data;
     data2.block(radius, 0, data.rows(), radius) =
@@ -305,14 +300,11 @@ MatrixXd SMRFilter::createDSM(MatrixXd const& cx, MatrixXd const& cy, PointViewP
     }
     writeMatrix(ZImin, "zimin.tif", m_cellSize, view);
 
-    if (m_inpaint)
-    {
-        // auto ZImin_painted = inpaint(ZImin);
-        auto ZImin_painted = TPS(cx, cy, ZImin);
-        writeMatrix(ZImin_painted, "zimin_painted.tif", m_cellSize, view);
+    // auto ZImin_painted = inpaint(ZImin);
+    auto ZImin_painted = TPS(cx, cy, ZImin);
+    writeMatrix(ZImin_painted, "zimin_painted.tif", m_cellSize, view);
 
-        ZImin = ZImin_painted;
-    }
+    ZImin = ZImin_painted;
 
     return ZImin;
 }
@@ -340,7 +332,7 @@ MatrixXi SMRFilter::progressiveFilter(MatrixXd const& ZImin, double cell_size, d
     auto ZIlocal = ZImin;
     for (int radius = 1; radius <= max_radius; ++radius)
     {
-        log()->get(LogLevel::Debug) << "Radius = " << radius << std::endl;
+        log()->get(LogLevel::Debug) << "progressiveFilters: Radius = " << radius << std::endl;
 
         // On the first iteration, the minimum surface (ZImin) is opened using a
         // disk-shaped structuring element with a radius of one pixel.
@@ -371,6 +363,8 @@ MatrixXi SMRFilter::progressiveFilter(MatrixXd const& ZImin, double cell_size, d
         // maximum), and proceeds as above with the last opened surface acting
         // as the ‘‘minimum surface’’ for the next difference calculation.
         ZIlocal = mo;
+
+        log()->get(LogLevel::Debug) << "progressiveFilter: " << Obj.sum() << " object pixels\n";
     }
 
     return Obj;
@@ -530,11 +524,7 @@ std::vector<PointId> SMRFilter::processGround(PointViewPtr view)
     m_maxRow = m_bounds.miny + m_numRows * m_cellSize;
 
     MatrixXd cx(m_numRows, m_numCols);
-    cx.setConstant(std::numeric_limits<double>::quiet_NaN());
-
     MatrixXd cy(m_numRows, m_numCols);
-    cy.setConstant(std::numeric_limits<double>::quiet_NaN());
-
     for (auto c = 0; c < m_numCols; ++c)
     {
         for (auto r = 0; r < m_numRows; ++r)
@@ -627,14 +617,11 @@ std::vector<PointId> SMRFilter::processGround(PointViewPtr view)
     }
     writeMatrix(ZIpro, "zipro.tif", m_cellSize, view);
 
-    if (m_inpaint)
-    {
-        // auto ZIpro_painted = inpaint(ZIpro);
-        auto ZIpro_painted = TPS(cx, cy, ZIpro);
-        writeMatrix(ZIpro_painted, "zipro_painted.tif", m_cellSize, view);
+    // auto ZIpro_painted = inpaint(ZIpro);
+    auto ZIpro_painted = TPS(cx, cy, ZIpro);
+    writeMatrix(ZIpro_painted, "zipro_painted.tif", m_cellSize, view);
 
-        ZIpro = ZIpro_painted;
-    }
+    ZIpro = ZIpro_painted;
 
     // STEP 4:
 
