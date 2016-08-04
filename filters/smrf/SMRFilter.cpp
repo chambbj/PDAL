@@ -748,22 +748,22 @@ std::vector<PointId> SMRFilter::processGround(PointViewPtr view)
         if (std::isnan(gsurfs(r, c)))
             continue;
             
-        // double ez = ZIpro(r, c);
-        // // double ez = interp2(r, c, cx, cy, ZIpro);
-        // double si = gsurfs(r, c);
-        // // double si = interp2(r, c, cx, cy, gsurfs);
-        // double reqVal = m_threshold + 1.2 * si;
-        // // std::cerr << ez << "\t"
-        // //           << z << "\t"
-        // //           << si << "\t"
-        // //           << reqVal << "\t"
-        // //           << std::abs(ez - z) << std::endl;
-        // 
-        // if (std::abs(ez - z) > reqVal)
-        //     continue;
+        double ez = ZIpro(r, c);
+        // double ez = interp2(r, c, cx, cy, ZIpro);
+        double si = gsurfs(r, c);
+        // double si = interp2(r, c, cx, cy, gsurfs);
+        double reqVal = m_threshold + 1.2 * si;
+        // std::cerr << ez << "\t"
+        //           << z << "\t"
+        //           << si << "\t"
+        //           << reqVal << "\t"
+        //           << std::abs(ez - z) << std::endl;
         
-        if (std::abs(ZIpro(r, c) - z) > m_threshold)
+        if (std::abs(ez - z) > reqVal)
             continue;
+        
+        // if (std::abs(ZIpro(r, c) - z) > m_threshold)
+        //     continue;
             
         groundIdx.push_back(i);
     }
