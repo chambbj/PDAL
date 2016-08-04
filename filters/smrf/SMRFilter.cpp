@@ -275,6 +275,13 @@ MatrixXd SMRFilter::padMatrix(MatrixXd data, int radius)
     return data2;
 }
 
+// MatrixXd SMRFilter::createNet(MatrixXd const& ZImin, double cell_size, double grid_size)
+// {
+//     MatrixXd bigOpen = matrixOpen(ZImin, 2*std::ceil(grid_size / cell_size));
+//     MatrixXd ZInet = ZImin;
+//     return ZInet;
+// }
+
 MatrixXd SMRFilter::createDSM(MatrixXd const& cx, MatrixXd const& cy, PointViewPtr view)
 {
     MatrixXd ZImin(m_numRows, m_numCols);
@@ -591,9 +598,34 @@ std::vector<PointId> SMRFilter::processGround(PointViewPtr view)
     writeMatrix(Low.cast<double>(), "zilow.tif", m_cellSize, view);
 
     // matlab code has net cutting occurring here
+    MatrixXd bigOpen = matrixOpen(ZImin, 2*std::ceil(m_maxWindow / m_cellSize));
+    MatrixXd ZInet = ZImin;
+    MatrixXi isNetCell = MatrixXi::Zero(m_numRows, m_numCols);
+    for (auto c = 0; c < m_numCols; c += std::ceil(m_maxWindow/m_cellSize))
+    {
+        for (auto r = 0; r < m_numRows; ++r)
+        {
+            isNetCell(r, c) = 1;
+        }
+    }
+    for (auto c = 0; c < m_numCols; ++c)
+    {
+        for (auto r = 0; r < m_numRows; r += std::ceil(m_maxWindow/m_cellSize))
+        {
+            isNetCell(r, c) = 1;
+        }
+    }
+    for (auto c = 0; c < m_numCols; ++c)
+    {
+        for (auto r = 0; r < m_numRows; ++r)
+        {
+            if (isNetCell(r, c)==1)
+                ZInet(r, c) = bigOpen(r, c);
+        }
+    }
 
     // and finally object detection
-    MatrixXi Obj = progressiveFilter(ZImin, m_cellSize, m_percentSlope, m_maxWindow);
+    MatrixXi Obj = progressiveFilter(ZInet, m_cellSize, m_percentSlope, m_maxWindow);
     writeMatrix(Obj.cast<double>(), "ziobj.tif", m_cellSize, view);
 
     // STEP 3:
@@ -609,7 +641,7 @@ std::vector<PointId> SMRFilter::processGround(PointViewPtr view)
     MatrixXd ZIpro = ZImin;
     for (int i = 0; i < Obj.size(); ++i)
     {
-        if (Obj(i) == 1 || Low(i) == 1)
+        if (Obj(i) == 1 || Low(i) == 1 || isNetCell(i) == 1)
             ZIpro(i) = std::numeric_limits<double>::quiet_NaN();
     }
     writeMatrix(ZIpro, "zipro.tif", m_cellSize, view);
