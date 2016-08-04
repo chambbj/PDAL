@@ -70,6 +70,7 @@ void SMRFilter::addArgs(ProgramArgs& args)
     args.add("slope", "Slope?", m_percentSlope, 0.15);
     args.add("window", "Max window size?", m_maxWindow, 21.0);
     args.add("threshold", "Threshold?", m_threshold, 0.15);
+    args.add("cut", "Cut net size?", m_cutNet, 0.0);
 }
 
 void SMRFilter::addDimensions(PointLayoutPtr layout)
@@ -241,10 +242,10 @@ std::vector<PointId> SMRFilter::processGround(PointViewPtr view)
     MatrixXd ZImin = createDSM(*view.get(), m_numRows, m_numCols, m_cellSize,
                                m_bounds);
     writeMatrix(ZImin, "zimin.tif", m_cellSize, view);
-    
+
     MatrixXd ZImin_painted = TPS(cx, cy, ZImin);
     writeMatrix(ZImin_painted, "zimin_painted.tif", m_cellSize, view);
-    
+
     ZImin = ZImin_painted;
 
     // STEP 2:
@@ -267,29 +268,32 @@ std::vector<PointId> SMRFilter::processGround(PointViewPtr view)
     writeMatrix(Low.cast<double>(), "zilow.tif", m_cellSize, view);
 
     // matlab code has net cutting occurring here
-    MatrixXd bigOpen = matrixOpen(ZImin, 2*std::ceil(m_maxWindow / m_cellSize));
     MatrixXd ZInet = ZImin;
     MatrixXi isNetCell = MatrixXi::Zero(m_numRows, m_numCols);
-    for (auto c = 0; c < m_numCols; c += std::ceil(m_maxWindow/m_cellSize))
+    if (m_cutNet > 0.0)
     {
-        for (auto r = 0; r < m_numRows; ++r)
+        MatrixXd bigOpen = matrixOpen(ZImin, 2*std::ceil(m_cutNet / m_cellSize));
+        for (auto c = 0; c < m_numCols; c += std::ceil(m_cutNet/m_cellSize))
         {
-            isNetCell(r, c) = 1;
+            for (auto r = 0; r < m_numRows; ++r)
+            {
+                isNetCell(r, c) = 1;
+            }
         }
-    }
-    for (auto c = 0; c < m_numCols; ++c)
-    {
-        for (auto r = 0; r < m_numRows; r += std::ceil(m_maxWindow/m_cellSize))
+        for (auto c = 0; c < m_numCols; ++c)
         {
-            isNetCell(r, c) = 1;
+            for (auto r = 0; r < m_numRows; r += std::ceil(m_cutNet/m_cellSize))
+            {
+                isNetCell(r, c) = 1;
+            }
         }
-    }
-    for (auto c = 0; c < m_numCols; ++c)
-    {
-        for (auto r = 0; r < m_numRows; ++r)
+        for (auto c = 0; c < m_numCols; ++c)
         {
-            if (isNetCell(r, c)==1)
-                ZInet(r, c) = bigOpen(r, c);
+            for (auto r = 0; r < m_numRows; ++r)
+            {
+                if (isNetCell(r, c)==1)
+                    ZInet(r, c) = bigOpen(r, c);
+            }
         }
     }
 

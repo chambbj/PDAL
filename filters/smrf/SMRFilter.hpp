@@ -70,6 +70,7 @@ private:
     int m_numCols;
     int m_maxRow;
     double m_cellSize;
+    double m_cutNet;
     double m_percentSlope;
     double m_maxWindow;
     double m_threshold;
