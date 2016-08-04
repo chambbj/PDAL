@@ -95,15 +95,15 @@ int SMRFilter::getRowIndex(double y, double cell_size)
 // MatrixXd SMRFilter::inpaint(MatrixXd data)
 // {
 //     log()->get(LogLevel::Debug) << "Inpainting...\n";
-// 
+//
 //     MatrixXd B = data;
 //     B.resize(data.size(), 1);
-// 
+//
 //     MatrixXi nan_list(data.size(), 3);
 //     VectorXi known_list(data.size());
-// 
+//
 //     int nidx = 0, kidx = 0, nmidx = 0;
-// 
+//
 //     for (int c = 0; c < data.cols(); ++c)
 //     {
 //         for (int r = 0; r < data.rows(); ++r)
@@ -115,19 +115,19 @@ int SMRFilter::getRowIndex(double y, double cell_size)
 //             nmidx++;
 //         }
 //     }
-// 
+//
 //     nan_list.conservativeResize(nidx, NoChange);
 //     known_list.conservativeResize(kidx);
-// 
+//
 //     int nan_count = nan_list.rows();
 //     log()->get(LogLevel::Debug) << "Found " << nan_count << " NaN's\n";
-// 
+//
 //     MatrixXi hv_list(4, 3);
 //     hv_list.row(0) <<           -1, -1,  0;
 //     hv_list.row(1) <<            1,  1,  0,
 //                 hv_list.row(2) << -data.rows(),  0, -1,
 //                 hv_list.row(3) <<  data.rows(),  0,  1;
-// 
+//
 //     std::map<int, int> hv_springs;
 //     for (int i = 0; i < 4; ++i)
 //     {
@@ -147,13 +147,13 @@ int SMRFilter::getRowIndex(double y, double cell_size)
 //     }
 //     log()->get(LogLevel::Debug) << "Identified " << hv_springs.size()
 //                                 << " unique spring connections\n";
-// 
+//
 //     // build sparse matrix of connections
 //     MatrixXi hv_springs2(hv_springs.size(), 2);
 //     int sprow = 0;
 //     for (auto it = hv_springs.begin(); it != hv_springs.end(); ++it)
 //         hv_springs2.row(sprow++) << it->first, it->second;
-// 
+//
 //     SparseMatrix<double> springs(2*hv_springs2.rows(), data.size());
 //     // SparseMatrix<double> springs(data.size(), data.size());
 //     // std::vector<Triplet<double> > triplets(2*hv_springs.size());
@@ -168,24 +168,24 @@ int SMRFilter::getRowIndex(double y, double cell_size)
 //     }
 //     springs.setFromTriplets(triplets.begin(), triplets.end());
 //     springs.makeCompressed();
-// 
+//
 //     SparseMatrix<double> known_springs(springs.rows(), known_list.size());
 //     for (int i = 0; i < known_list.size(); ++i)
 //         known_springs.col(i) = springs.col(known_list(i));
 //     known_springs.makeCompressed();
-// 
+//
 //     // eliminate knowns
 //     VectorXd knowns(known_list.size());
 //     for (int i = 0; i < known_list.size(); ++i)
 //         knowns(i) = data(known_list(i));
-// 
+//
 //     auto b = -known_springs * knowns;
-// 
+//
 //     SparseMatrix<double> nan_springs(springs.rows(), nan_count);
 //     for (int i = 0; i < nan_count; ++i)
 //         nan_springs.col(i) = springs.col(nan_list(i, 0));
 //     nan_springs.makeCompressed();
-// 
+//
 //     // solve Ax=b, replace nans with interpolated values
 //     SparseQR<SparseMatrix<double>, COLAMDOrdering<int> > solver;
 //     solver.compute(nan_springs);
@@ -195,7 +195,7 @@ int SMRFilter::getRowIndex(double y, double cell_size)
 //     if (solver.info() != Success)
 //         std::cerr << "Solving failed\n";
 //     std::cerr << (nan_springs*x-b).norm()/b.norm() << std::endl;
-// 
+//
 //     for (int i = 0; i < nan_count; ++i)
 //         B(nan_list(i, 0)) = x(i);
 //     B.resize(data.rows(), data.cols());
@@ -283,37 +283,37 @@ MatrixXd SMRFilter::padMatrix(MatrixXd data, int radius)
 MatrixXd SMRFilter::createDSM(MatrixXd const& cx, MatrixXd const& cy, PointViewPtr view)
 {
     point_count_t np(view->size());
-    
+
     MatrixXd ZImin(m_numRows, m_numCols);
     ZImin.setConstant(std::numeric_limits<double>::quiet_NaN());
-    
+
     for (PointId i = 0; i < np; ++i)
     {
         using namespace Dimension;
-    
+
         double x = view->getFieldAs<double>(Id::X, i);
         double y = view->getFieldAs<double>(Id::Y, i);
         double z = view->getFieldAs<double>(Id::Z, i);
-    
+
         int c = clamp(getColIndex(x, m_cellSize), 0, m_numCols-1);
         int r = clamp(getRowIndex(y, m_cellSize), 0, m_numRows-1);
-    
+
         if (z < ZImin(r, c) || std::isnan(ZImin(r, c)))
         {
             ZImin(r, c) = z;
         }
     }
     writeMatrix(ZImin, "zimin.tif", m_cellSize, view);
-    
+
     if (m_inpaint)
     {
         // auto ZImin_painted = inpaint(ZImin);
         auto ZImin_painted = TPS(cx, cy, ZImin);
         writeMatrix(ZImin_painted, "zimin_painted.tif", m_cellSize, view);
-    
+
         ZImin = ZImin_painted;
     }
-    
+
     return ZImin;
 }
 
@@ -372,35 +372,35 @@ MatrixXi SMRFilter::progressiveFilter(MatrixXd const& ZImin, double cell_size, d
         // as the ‘‘minimum surface’’ for the next difference calculation.
         ZIlocal = mo;
     }
-    
+
     return Obj;
 }
 
 // double SMRFilter::interp2(int r, int c, MatrixXd cx, MatrixXd cy, MatrixXd cz)
 // {
 //     log()->get(LogLevel::Debug) << "Reticulating splines...\n";
-// 
+//
 //             // Further optimizations are achieved by estimating only the
 //             // interpolated surface within a local neighbourhood (e.g. a 7 x 7
 //             // neighbourhood is used in our case) of the cell being filtered.
 //             int radius = 3;
-// 
+//
 //             int cs = clamp(c-radius, 0, m_numCols-1);
 //             int ce = clamp(c+radius, 0, m_numCols-1);
 //             int col_size = ce - cs + 1;
 //             int rs = clamp(r-radius, 0, m_numRows-1);
 //             int re = clamp(r+radius, 0, m_numRows-1);
 //             int row_size = re - rs + 1;
-// 
+//
 //             MatrixXd Xn = cx.block(rs, cs, row_size, col_size);
 //             MatrixXd Yn = cy.block(rs, cs, row_size, col_size);
 //             MatrixXd Hn = cz.block(rs, cs, row_size, col_size);
-// 
+//
 //             int nsize = Hn.size();
 //             VectorXd T = VectorXd::Zero(nsize);
 //             MatrixXd P = MatrixXd::Zero(nsize, 3);
 //             MatrixXd K = MatrixXd::Zero(nsize, nsize);
-// 
+//
 //             int numK(0);
 //             for (auto id = 0; id < Hn.size(); ++id)
 //             {
@@ -424,23 +424,23 @@ MatrixXi SMRFilter::progressiveFilter(MatrixXd const& ZImin, double cell_size, d
 //                     K(id, id2) = rsqr * std::log10(std::sqrt(rsqr));
 //                 }
 //             }
-//             
+//
 //             // if (numK < 20)
 //             //     continue;
-//             
+//
 //             MatrixXd A = MatrixXd::Zero(nsize+3, nsize+3);
 //             A.block(0,0,nsize,nsize) = K;
 //             A.block(0,nsize,nsize,3) = P;
 //             A.block(nsize,0,3,nsize) = P.transpose();
-// 
+//
 //             VectorXd b = VectorXd::Zero(nsize+3);
 //             b.head(nsize) = T;
-// 
+//
 //             VectorXd x = A.fullPivHouseholderQr().solve(b);
-// 
+//
 //             Vector3d a = x.tail(3);
 //             VectorXd w = x.head(nsize);
-// 
+//
 //             double sum = 0.0;
 //             double xi2 = cx(r, c);
 //             double yi2 = cy(r, c);
@@ -453,9 +453,9 @@ MatrixXi SMRFilter::progressiveFilter(MatrixXd const& ZImin, double cell_size, d
 //                     continue;
 //                 sum += w(j) * rsqr * std::log10(std::sqrt(rsqr));
 //             }
-// 
+//
 //             return a(0) + a(1)*xi2 + a(2)*yi2 + sum;
-// 
+//
 //             // std::cerr << std::fixed;
 //             // std::cerr << std::setprecision(3)
 //             //           << std::left
@@ -543,7 +543,7 @@ std::vector<PointId> SMRFilter::processGround(PointViewPtr view)
             cy(r, c) = m_bounds.miny + (r + 0.5) * m_cellSize;
         }
     }
-    
+
     // STEP 1:
 
     // As with many other ground filtering algorithms, the first step is
@@ -598,15 +598,15 @@ std::vector<PointId> SMRFilter::processGround(PointViewPtr view)
     // illustrates an opening operation on a cross section of a transect from
     // Sample 1–1 in the ISPRS LIDAR reference dataset (Sithole and Vosselman,
     // 2003), following Zhang et al. (2003).
-    
+
     // paper has low point happening later, i guess it doesn't matter too much, this is where he does it in matlab code
-    MatrixXi Low = progressiveFilter(-ZImin, m_cellSize, 5.0, 1.0);    
+    MatrixXi Low = progressiveFilter(-ZImin, m_cellSize, 5.0, 1.0);
     writeMatrix(Low.cast<double>(), "zilow.tif", m_cellSize, view);
-    
+
     // matlab code has net cutting occurring here
-    
+
     // and finally object detection
-    MatrixXi Obj = progressiveFilter(ZImin, m_cellSize, m_percentSlope, m_maxWindow);    
+    MatrixXi Obj = progressiveFilter(ZImin, m_cellSize, m_percentSlope, m_maxWindow);
     writeMatrix(Obj.cast<double>(), "ziobj.tif", m_cellSize, view);
 
     // STEP 3:
@@ -693,7 +693,7 @@ std::vector<PointId> SMRFilter::processGround(PointViewPtr view)
     // include this portion of the algorithm in the formal testing procedure,
     // though we provide a brief analysis of the effect of using this net filter
     // in the next section.
-    
+
     auto diffX = [&](MatrixXd mat)
     {
         MatrixXd data = padMatrix(mat, 1);
@@ -701,7 +701,7 @@ std::vector<PointId> SMRFilter::processGround(PointViewPtr view)
         return data2.block(1, 1, mat.rows(), mat.cols());
         // return mat.rightCols(mat.cols()-1) - mat.leftCols(mat.cols()-1);
     };
-    
+
     auto diffY = [&](MatrixXd mat)
     {
         MatrixXd data = padMatrix(mat, 1);
@@ -709,14 +709,14 @@ std::vector<PointId> SMRFilter::processGround(PointViewPtr view)
         return data2.block(1, 1, mat.rows(), mat.cols());
         // return mat.bottomRows(mat.rows()-1) - mat.topRows(mat.rows()-1);
     };
-    
+
     MatrixXd gx = diffX(ZIpro / m_cellSize);
     writeMatrix(gx, "gx.tif", m_cellSize, view);
     MatrixXd gy = diffY(ZIpro / m_cellSize);
     writeMatrix(gy, "gy.tif", m_cellSize, view);
     MatrixXd gsurfs = (gx.cwiseProduct(gx) + gy.cwiseProduct(gy)).cwiseSqrt();
     writeMatrix(gsurfs, "gsurfs.tif", m_cellSize, view);
-    
+
     for (PointId i = 0; i < np; ++i)
     {
         using namespace Dimension;
@@ -726,28 +726,28 @@ std::vector<PointId> SMRFilter::processGround(PointViewPtr view)
 
         int c = clamp(getColIndex(x, m_cellSize), 0, m_numCols-1);
         int r = clamp(getRowIndex(y, m_cellSize), 0, m_numRows-1);
-        
+
         // author uses spline interpolation to get value from ZIpro and gsurfs
-        
+
         if (std::isnan(ZIpro(r, c)))
             continue;
-            
+
         // not sure i should just brush this under the rug...
         if (std::isnan(gsurfs(r, c)))
             continue;
-            
+
         double ez = ZIpro(r, c);
         // double ez = interp2(r, c, cx, cy, ZIpro);
         double si = gsurfs(r, c);
         // double si = interp2(r, c, cx, cy, gsurfs);
         double reqVal = m_threshold + 1.2 * si;
-        
+
         if (std::abs(ez - z) > reqVal)
             continue;
-        
+
         // if (std::abs(ZIpro(r, c) - z) > m_threshold)
         //     continue;
-            
+
         groundIdx.push_back(i);
     }
 
@@ -874,10 +874,10 @@ MatrixXd SMRFilter::TPS(MatrixXd cx, MatrixXd cy, MatrixXd cz)
                     K(id, id2) = rsqr * std::log10(std::sqrt(rsqr));
                 }
             }
-            
+
             if (numK < 20)
                 continue;
-            
+
             MatrixXd A = MatrixXd::Zero(nsize+3, nsize+3);
             A.block(0,0,nsize,nsize) = K;
             A.block(0,nsize,nsize,3) = P;
