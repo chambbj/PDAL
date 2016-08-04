@@ -84,8 +84,8 @@ private:
 
     // createDSM returns a matrix with minimum Z values from the provided
     // PointView.
-    MatrixXd createDSM(MatrixXd const& cx, MatrixXd const& cy,
-                       PointViewPtr view);
+    MatrixXd createDSM(PointViewPtr view, int rows, int cols,
+                       double cell_size);
 
     // getColIndex gets the corresponding column index for a given x.
     int getColIndex(double x, double cell_size);

@@ -81,10 +81,10 @@ int SMRFilter::clamp(int t, int min, int max)
     return ((t < min) ? min : ((t > max) ? max : t));
 }
 
-MatrixXd SMRFilter::createDSM(MatrixXd const& cx, MatrixXd const& cy,
-                              PointViewPtr view)
+MatrixXd SMRFilter::createDSM(PointViewPtr view, int rows, int cols,
+                              double cell_size)
 {
-    MatrixXd ZImin(m_numRows, m_numCols);
+    MatrixXd ZImin(rows, cols);
     ZImin.setConstant(std::numeric_limits<double>::quiet_NaN());
 
     for (PointId i = 0; i < view->size(); ++i)
@@ -95,21 +95,12 @@ MatrixXd SMRFilter::createDSM(MatrixXd const& cx, MatrixXd const& cy,
         double y = view->getFieldAs<double>(Id::Y, i);
         double z = view->getFieldAs<double>(Id::Z, i);
 
-        int c = clamp(getColIndex(x, m_cellSize), 0, m_numCols-1);
-        int r = clamp(getRowIndex(y, m_cellSize), 0, m_numRows-1);
+        int c = clamp(getColIndex(x, cell_size), 0, cols-1);
+        int r = clamp(getRowIndex(y, cell_size), 0, rows-1);
 
         if (z < ZImin(r, c) || std::isnan(ZImin(r, c)))
-        {
             ZImin(r, c) = z;
-        }
     }
-    writeMatrix(ZImin, "zimin.tif", m_cellSize, view);
-
-    // auto ZImin_painted = inpaint(ZImin);
-    auto ZImin_painted = TPS(cx, cy, ZImin);
-    writeMatrix(ZImin_painted, "zimin_painted.tif", m_cellSize, view);
-
-    ZImin = ZImin_painted;
 
     return ZImin;
 }
@@ -270,7 +261,14 @@ std::vector<PointId> SMRFilter::processGround(PointViewPtr view)
     // these latter techniques were nearly the same with regards to total error,
     // with the spring technique performing slightly better than the k-nearest
     // neighbor (KNN) approach.
-    MatrixXd ZImin = createDSM(cx, cy, view);
+    MatrixXd ZImin = createDSM(view, m_numRows, m_numCols, m_cellSize);
+    writeMatrix(ZImin, "zimin.tif", m_cellSize, view);
+    
+    // auto ZImin_painted = inpaint(ZImin);
+    auto ZImin_painted = TPS(cx, cy, ZImin);
+    writeMatrix(ZImin_painted, "zimin_painted.tif", m_cellSize, view);
+    
+    ZImin = ZImin_painted;
 
     // STEP 2:
 
