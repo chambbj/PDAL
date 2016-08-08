@@ -91,6 +91,8 @@ private:
 
     // matrixOpen applies a morphological opening with the given radius.
     MatrixXd matrixOpen(MatrixXd data, int radius);
+    
+    MatrixXd inpaintKnn(MatrixXd cx, MatrixXd cy, MatrixXd cz);
 
     // padMatrx pads the matrix symmetrically with given radius.
     MatrixXd padMatrix(MatrixXd data, int radius);
@@ -107,6 +109,7 @@ private:
 
     // TPS returns an interpolated matrix using thin plate splines.
     MatrixXd TPS(MatrixXd cx, MatrixXd cy, MatrixXd cz);
+    MatrixXd expandingTPS(MatrixXd cx, MatrixXd cy, MatrixXd cz);
 
     // writeMatrix writes out Eigen matrices to GeoTIFFs for debugging.
     void writeMatrix(MatrixXd data, std::string filename,

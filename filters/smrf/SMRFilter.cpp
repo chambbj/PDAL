@@ -57,6 +57,18 @@ static PluginInfo const s_info =
 
 CREATE_STATIC_PLUGIN(1, 0, SMRFilter, Filter, s_info)
 
+struct distElev {
+    double dist;
+    double elev;
+};
+
+struct by_dist {
+    bool operator()(distElev const& a, distElev const& b)
+    {
+        return a.dist < b.dist;
+    }
+};
+
 std::string SMRFilter::getName() const
 {
     return s_info.name;
@@ -151,6 +163,93 @@ MatrixXd SMRFilter::matrixOpen(MatrixXd data, int radius)
     return maxZ.block(radius, radius, data.rows(), data.cols());
 }
 
+MatrixXd SMRFilter::inpaintKnn(MatrixXd cx, MatrixXd cy, MatrixXd cz)
+{
+    MatrixXd out = cz;
+    
+    for (auto c = 0; c < m_numCols; ++c)
+    {
+        for (auto r = 0; r < m_numRows; ++r)
+        {
+            if (!std::isnan(cz(r, c)))
+                continue;
+                
+            int radius = 1;
+            bool enough = false;
+            
+            while (!enough)
+            {
+                // log()->get(LogLevel::Debug) << r << "\t" << c << "\t" << radius << std::endl;
+                int cs = clamp(c-radius, 0, m_numCols-1);
+                int ce = clamp(c+radius, 0, m_numCols-1);
+                int col_size = ce - cs + 1;
+                int rs = clamp(r-radius, 0, m_numRows-1);
+                int re = clamp(r+radius, 0, m_numRows-1);
+                int row_size = re - rs + 1;
+
+                // MatrixXd Xn = cx.block(rs, cs, row_size, col_size);
+                // MatrixXd Yn = cy.block(rs, cs, row_size, col_size);
+                MatrixXd Zn = cz.block(rs, cs, row_size, col_size);
+                
+                auto notNaN = [](double x)
+                {
+                    return !std::isnan(x);
+                };
+                
+                enough = Zn.unaryExpr(notNaN).count() >= 8;
+                if (!enough)
+                {
+                    ++radius;
+                    continue;
+                }
+                
+                // auto zNotNaN = [](double x)
+                // {
+                //     if (!std::isnan(x))
+                //         return x;
+                //     else
+                //         return 0.0;
+                // };
+                // 
+                // // proceed to find 8 nearest neighbors and average the z values
+                // // std::cerr << Zn.unaryExpr(zNotNaN).sum() << "\t" << Zn.size() << "\t" << Zn.unaryExpr(zNotNaN).sum() / Zn.size() << std::endl;
+                // out(r, c) = Zn.unaryExpr(zNotNaN).sum() / Zn.size();
+                
+                std::vector<distElev> de;
+                
+                for (auto cc = cs; cc <= ce; ++cc)
+                {
+                    for (auto rr = rs; rr <= re; ++rr)
+                    {
+                        if (std::isnan(cz(rr, cc)))
+                            continue;
+                            
+                        // compute distance to !isnan neighbor
+                        double dx = cx(rr, cc) - cx(r, c);
+                        double dy = cy(rr, cc) - cy(r, c);
+                        double sqrdist = dx * dx + dy * dy;
+                        de.push_back(distElev{sqrdist, cz(rr, cc)});
+                    }
+                }
+                // sort dists
+                std::sort(de.begin(), de.end(), by_dist());
+                
+                // average elevatio of lowest eight dists
+                double sum = 0.0;
+                for (auto i = 0; i < 8; ++i)
+                {
+                    sum += de[i].elev;
+                }
+                sum /= 8.0;
+                
+                out(r, c) = sum;
+            }
+        }
+    }
+    
+    return out;
+}
+
 MatrixXd SMRFilter::padMatrix(MatrixXd data, int radius)
 {
     MatrixXd data2 = MatrixXd::Zero(data.rows()+2*radius, data.cols()+2*radius);
@@ -243,7 +342,9 @@ std::vector<PointId> SMRFilter::processGround(PointViewPtr view)
                                m_bounds);
     writeMatrix(ZImin, "zimin.tif", m_cellSize, view);
 
-    MatrixXd ZImin_painted = TPS(cx, cy, ZImin);
+    // MatrixXd ZImin_painted = inpaintKnn(cx, cy, ZImin);
+    // MatrixXd ZImin_painted = TPS(cx, cy, ZImin);
+    MatrixXd ZImin_painted = expandingTPS(cx, cy, ZImin);
     writeMatrix(ZImin_painted, "zimin_painted.tif", m_cellSize, view);
 
     ZImin = ZImin_painted;
@@ -295,6 +396,7 @@ std::vector<PointId> SMRFilter::processGround(PointViewPtr view)
                     ZInet(r, c) = bigOpen(r, c);
             }
         }
+        writeMatrix(ZInet, "zinet.tif", m_cellSize, view);
     }
 
     // and finally object detection
@@ -319,7 +421,9 @@ std::vector<PointId> SMRFilter::processGround(PointViewPtr view)
     }
     writeMatrix(ZIpro, "zipro.tif", m_cellSize, view);
 
-    MatrixXd ZIpro_painted = TPS(cx, cy, ZIpro);
+    // MatrixXd ZIpro_painted = inpaintKnn(cx, cy, ZIpro);
+    // MatrixXd ZIpro_painted = TPS(cx, cy, ZIpro);
+    MatrixXd ZIpro_painted = expandingTPS(cx, cy, ZIpro);
     writeMatrix(ZIpro_painted, "zipro_painted.tif", m_cellSize, view);
 
     ZIpro = ZIpro_painted;
@@ -402,6 +506,16 @@ std::vector<PointId> SMRFilter::processGround(PointViewPtr view)
     writeMatrix(gy, "gy.tif", m_cellSize, view);
     MatrixXd gsurfs = (gx.cwiseProduct(gx) + gy.cwiseProduct(gy)).cwiseSqrt();
     writeMatrix(gsurfs, "gsurfs.tif", m_cellSize, view);
+    
+    // MatrixXd gsurfs_painted = inpaintKnn(cx, cy, gsurfs);
+    // MatrixXd gsurfs_painted = TPS(cx, cy, gsurfs);
+    MatrixXd gsurfs_painted = expandingTPS(cx, cy, gsurfs);
+    writeMatrix(gsurfs_painted, "gsurfs_painted.tif", m_cellSize, view);
+
+    gsurfs = gsurfs_painted;
+    
+    MatrixXd thresh = (m_threshold + 1.2 * gsurfs.array()).matrix();
+    writeMatrix(thresh, "thresh.tif", m_cellSize, view);
 
     for (PointId i = 0; i < view->size(); ++i)
     {
@@ -424,11 +538,11 @@ std::vector<PointId> SMRFilter::processGround(PointViewPtr view)
 
         double ez = ZIpro(r, c);
         // double ez = interp2(r, c, cx, cy, ZIpro);
-        double si = gsurfs(r, c);
+        // double si = gsurfs(r, c);
         // double si = interp2(r, c, cx, cy, gsurfs);
-        double reqVal = m_threshold + 1.2 * si;
+        // double reqVal = m_threshold + 1.2 * si;
 
-        if (std::abs(ez - z) > reqVal)
+        if (std::abs(ez - z) > thresh(r, c))
             continue;
 
         // if (std::abs(ZIpro(r, c) - z) > m_threshold)
@@ -702,6 +816,177 @@ MatrixXd SMRFilter::TPS(MatrixXd cx, MatrixXd cy, MatrixXd cz)
             //           << std::setw(8)
             //           << a.transpose()
             //           << std::endl;
+        }
+    }
+
+    double frac = static_cast<double>(num_nan_replace);
+    frac /= static_cast<double>(num_nan_detect);
+    log()->get(LogLevel::Info) << "TPS: Filled " << num_nan_replace << " of "
+                               << num_nan_detect << " holes ("
+                               << frac * 100.0 << "%)\n";
+
+    return S;
+}
+
+MatrixXd SMRFilter::expandingTPS(MatrixXd cx, MatrixXd cy, MatrixXd cz)
+{
+    log()->get(LogLevel::Info) << "TPS: Reticulating splines...\n";
+
+    MatrixXd S = cz;
+
+    int num_nan_detect(0);
+    int num_nan_replace(0);
+
+    for (auto outer_col = 0; outer_col < m_numCols; ++outer_col)
+    {
+        for (auto outer_row = 0; outer_row < m_numRows; ++outer_row)
+        {
+            if (!std::isnan(S(outer_row, outer_col)))
+                continue;
+
+            num_nan_detect++;
+
+            // Further optimizations are achieved by estimating only the
+            // interpolated surface within a local neighbourhood (e.g. a 7 x 7
+            // neighbourhood is used in our case) of the cell being filtered.
+            int radius = 3;
+            bool solution = false;
+            
+            while (!solution)
+            {
+                // std::cerr << radius;
+                int cs = clamp(outer_col-radius, 0, m_numCols-1);
+                int ce = clamp(outer_col+radius, 0, m_numCols-1);
+                int col_size = ce - cs + 1;
+                int rs = clamp(outer_row-radius, 0, m_numRows-1);
+                int re = clamp(outer_row+radius, 0, m_numRows-1);
+                int row_size = re - rs + 1;
+
+                MatrixXd Xn = cx.block(rs, cs, row_size, col_size);
+                MatrixXd Yn = cy.block(rs, cs, row_size, col_size);
+                MatrixXd Hn = cz.block(rs, cs, row_size, col_size);
+
+                int nsize = Hn.size();
+                VectorXd T = VectorXd::Zero(nsize);
+                MatrixXd P = MatrixXd::Zero(nsize, 3);
+                MatrixXd K = MatrixXd::Zero(nsize, nsize);
+
+                int numK(0);
+                for (auto id = 0; id < Hn.size(); ++id)
+                {
+                    double xj = Xn(id);
+                    double yj = Yn(id);
+                    double zj = Hn(id);
+                    if (std::isnan(zj))
+                        continue;
+                    numK++;
+                    T(id) = zj;
+                    P.row(id) << 1, xj, yj;
+                    for (auto id2 = 0; id2 < Hn.size(); ++id2)
+                    {
+                        if (id == id2)
+                            continue;
+                        double xk = Xn(id2);
+                        double yk = Yn(id2);
+                        double rsqr = (xj - xk) * (xj - xk) + (yj - yk) * (yj - yk);
+                        if (rsqr == 0.0)
+                            continue;
+                        K(id, id2) = rsqr * std::log10(std::sqrt(rsqr));
+                    }
+                }
+
+                // if (numK < 20)
+                //     continue;
+
+                MatrixXd A = MatrixXd::Zero(nsize+3, nsize+3);
+                A.block(0,0,nsize,nsize) = K;
+                A.block(0,nsize,nsize,3) = P;
+                A.block(nsize,0,3,nsize) = P.transpose();
+
+                VectorXd b = VectorXd::Zero(nsize+3);
+                b.head(nsize) = T;
+
+                VectorXd x = A.fullPivHouseholderQr().solve(b);
+
+                Vector3d a = x.tail(3);
+                VectorXd w = x.head(nsize);
+
+                double sum = 0.0;
+                double xi2 = cx(outer_row, outer_col);
+                double yi2 = cy(outer_row, outer_col);
+                for (auto j = 0; j < nsize; ++j)
+                {
+                    double xj = Xn(j);
+                    double yj = Yn(j);
+                    double rsqr = (xj - xi2) * (xj - xi2) + (yj - yi2) * (yj - yi2);
+                    if (rsqr == 0.0)
+                        continue;
+                    sum += w(j) * rsqr * std::log10(std::sqrt(rsqr));
+                }
+                
+                double val = a(0) + a(1)*xi2 + a(2)*yi2 + sum;
+                solution = !std::isnan(val);
+                
+                if (!solution)
+                {
+                    std::cerr << "..." << radius << std::endl;;
+                    ++radius;
+                    continue;
+                }
+                
+                S(outer_row, outer_col) = val;
+                num_nan_replace++;
+                
+                // std::cerr << std::endl;
+
+                // std::cerr << std::fixed;
+                // std::cerr << std::setprecision(3)
+                //           << std::left
+                //           << "S(" << outer_row << "," << outer_col << "): "
+                //           << std::setw(10)
+                //           << S(outer_row, outer_col)
+                //           // << std::setw(3)
+                //           // << "\tz: "
+                //           // << std::setw(10)
+                //           // << zi
+                //           // << std::setw(7)
+                //           // << "\tzdiff: "
+                //           // << std::setw(5)
+                //           // << zi - S(outer_row, outer_col)
+                //           // << std::setw(7)
+                //           // << "\txdiff: "
+                //           // << std::setw(5)
+                //           // << xi2 - xi
+                //           // << std::setw(7)
+                //           // << "\tydiff: "
+                //           // << std::setw(5)
+                //           // << yi2 - yi
+                //           << std::setw(7)
+                //           << "\t# pts: "
+                //           << std::setw(3)
+                //           << nsize
+                //           << std::setw(5)
+                //           << "\tsum: "
+                //           << std::setw(10)
+                //           << sum
+                //           << std::setw(9)
+                //           << "\tw.sum(): "
+                //           << std::setw(5)
+                //           << w.sum()
+                //           << std::setw(6)
+                //           << "\txsum: "
+                //           << std::setw(5)
+                //           << w.dot(P.col(1))
+                //           << std::setw(6)
+                //           << "\tysum: "
+                //           << std::setw(5)
+                //           << w.dot(P.col(2))
+                //           << std::setw(3)
+                //           << "\ta: "
+                //           << std::setw(8)
+                //           << a.transpose()
+                //           << std::endl;
+            }
         }
     }
 
