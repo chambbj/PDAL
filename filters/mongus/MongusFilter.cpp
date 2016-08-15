@@ -34,6 +34,7 @@
 
 #include "MongusFilter.hpp"
 
+// #include <pdal/KDIndex.hpp>
 #include <pdal/pdal_macros.hpp>
 #include <pdal/PipelineManager.hpp>
 #include <buffer/BufferReader.hpp>
@@ -88,6 +89,131 @@ int MongusFilter::getColIndex(double x, double cell_size)
 int MongusFilter::getRowIndex(double y, double cell_size)
 {
     return static_cast<int>(floor((m_maxRow - y) / cell_size));
+}
+
+std::vector<PointId> MongusFilter::spline(PointViewPtr view,
+        std::vector<PointId> samples,
+        std::vector<PointId> control, Eigen::Ref<Eigen::Vector3d> a, Eigen::Ref<Eigen::VectorXd> w)
+{
+    using namespace Dimension;
+    using namespace Eigen;
+
+    // for each sx, sy sample location, compute the interpolate the value Z from spline control points cx, cy, cz
+    
+    std::vector<PointId> newcontrol;
+
+    std::vector<double> z(samples.size());
+    std::vector<double> residuals(samples.size());
+    
+    auto sqrDist = [](double xi, double xj, double yi, double yj)
+    {
+        return (xi - xj) * (xi - xj) + (yi - yj) * (yi - yj);
+    };
+
+    VectorXd T = VectorXd::Zero(control.size());
+    MatrixXd P = MatrixXd::Zero(control.size(), 3);
+    MatrixXd K = MatrixXd::Zero(control.size(), control.size());
+    
+    for (auto i = 0; i < control.size(); ++i)
+    {
+        PointId ii = control[i];
+        double xi = view->getFieldAs<double>(Id::X, ii);
+        double yi = view->getFieldAs<double>(Id::Y, ii);
+        double zi = view->getFieldAs<double>(Id::Z, ii);
+        T(i) = zi;
+        P.row(i) << 1, xi, yi;
+        for (auto j = 0; j < control.size(); ++j)
+        {
+            PointId jj = control[j];
+            if (ii == jj)
+                continue;
+            double xj = view->getFieldAs<double>(Id::X, jj);
+            double yj = view->getFieldAs<double>(Id::Y, jj);
+            double rsqr = sqrDist(xi, xj, yi, yj);
+            K(i, j) = rsqr * std::log10(std::sqrt(rsqr));
+        }
+    }
+    // log()->get(LogLevel::Debug) << "T: " << T.transpose() << std::endl;
+    // log()->get(LogLevel::Debug) << "P: " << P.transpose() << std::endl;
+    // log()->get(LogLevel::Debug) << "K: " << K << std::endl;
+    
+    MatrixXd A = MatrixXd::Zero(control.size()+3, control.size()+3);
+    A.block(0,0,control.size(),control.size()) = K;
+    A.block(0,control.size(),control.size(),3) = P;
+    A.block(control.size(),0,3,control.size()) = P.transpose();
+
+    VectorXd b = VectorXd::Zero(control.size()+3);
+    b.head(control.size()) = T;
+
+    VectorXd x = A.fullPivHouseholderQr().solve(b);
+
+    /*Vector3d*/ a = x.tail(3);
+    /*VectorXd*/ w = x.head(control.size());
+    
+    // log()->get(LogLevel::Debug) << "a: " << a.transpose() << std::endl;
+    // log()->get(LogLevel::Debug) << "w: " << w.transpose() << std::endl;
+
+    for (auto k = 0; k < samples.size(); ++k)
+    {
+        PointId kk = samples[k];
+
+        double xk = view->getFieldAs<double>(Id::X, kk);
+        double yk = view->getFieldAs<double>(Id::Y, kk);
+        
+        // only for debugging
+        double zk = view->getFieldAs<double>(Id::Z, kk);
+        // log()->get(LogLevel::Debug) << "Interpolating spline at (" << xk << "," << yk << "," << zk << ")...\n";
+
+        double sum = 0.0;
+        for (auto j = 0; j < control.size(); ++j)
+        {
+            PointId jj = control[j];
+            if (kk == jj)
+                continue;
+            double xj = view->getFieldAs<double>(Id::X, jj);
+            double yj = view->getFieldAs<double>(Id::Y, jj);
+            double rsqr = sqrDist(xk, xj, yk, yj);
+            // log()->get(LogLevel::Debug) << "rsqr = " << rsqr << std::endl;
+            // log()->get(LogLevel::Debug) << "log(sqrt(rsqr)) = " << std::log10(std::sqrt(rsqr)) << std::endl;
+            // log()->get(LogLevel::Debug) << "w = " << w(j) << std::endl;
+            
+            sum += w(j) * rsqr * std::log10(std::sqrt(rsqr));
+            // log()->get(LogLevel::Debug) << "sum = " << sum << std::endl;
+        }
+
+        z[k] = a(0) + a(1)*xk + a(2)*yk + sum;
+        // log()->get(LogLevel::Debug) << "\t..." << z[k] << "\t" << zk - z[k] << std::endl;
+        residuals[k] = zk - z[k];
+    }
+    
+    int n = 1;
+    double M1 = 0.0;
+    double M2 = 0.0;
+    for (auto const& r : residuals)
+    {
+        double delta, delta_n, delta_n2, term1;
+        int n1 = n;
+        delta = r - M1;
+        delta_n = delta / n;
+        delta_n2 = delta_n * delta_n;
+        term1 = delta * delta_n * n1;
+        M1 += delta_n;
+        M2 += term1;
+        n++;
+    }
+    double mean = M1;
+    double std = std::sqrt(M2 / (residuals.size()-1.0));
+    double t1 = M1 - 1*std;
+    double t2 = M1 + 1*std;
+    log()->get(LogLevel::Debug) << mean << "\t" << std << "\t" << t1 << "\t" << t2 << std::endl;
+    
+    for (auto k = 0; k < samples.size(); ++k)
+    {
+        if (residuals[k] < t1 || residuals[k] > t2)
+            continue;
+        newcontrol.push_back(samples[k]);
+    }
+    return newcontrol;
 }
 
 Eigen::MatrixXd MongusFilter::TPS(Eigen::MatrixXd cx, Eigen::MatrixXd cy,
@@ -338,6 +464,204 @@ void MongusFilter::writeMatrix(Eigen::MatrixXd data, std::string filename, doubl
     }
 }
 
+void MongusFilter::writeSurface(std::string filename, PointViewPtr view, std::vector<PointId> control, Eigen::Vector3d a, Eigen::VectorXd w)
+{
+  std::cerr << w.transpose() << std::endl;
+  std::cerr << w.size() << std::endl;
+    int cols = m_numCols/2;
+    int rows = m_numRows/2;
+
+    GDALAllRegister();
+
+    GDALDataset *mpDstDS;
+
+    char **papszMetadata;
+
+    // parse the format driver, hardcoded for the time being
+    std::string tFormat("GTIFF");
+    const char *pszFormat = tFormat.c_str();
+    GDALDriver* tpDriver = GetGDALDriverManager()->GetDriverByName(pszFormat);
+
+    // try to create a file of the requested format
+    if (tpDriver != NULL)
+    {
+        papszMetadata = tpDriver->GetMetadata();
+        if (CSLFetchBoolean(papszMetadata, GDAL_DCAP_CREATE, FALSE))
+        {
+            char **papszOptions = NULL;
+
+            mpDstDS = tpDriver->Create(filename.c_str(), cols, rows, 1,
+                                       GDT_Float32, papszOptions);
+
+            // set the geo transformation
+            double adfGeoTransform[6];
+            adfGeoTransform[0] = m_bounds.minx; // - 0.5*m_GRID_DIST_X;
+            adfGeoTransform[1] = m_cellSize*2;
+            adfGeoTransform[2] = 0.0;
+            adfGeoTransform[3] = m_bounds.maxy; // + 0.5*m_GRID_DIST_Y;
+            adfGeoTransform[4] = 0.0;
+            adfGeoTransform[5] = -1 * m_cellSize*2;
+            mpDstDS->SetGeoTransform(adfGeoTransform);
+
+            // set the projection
+            mpDstDS->SetProjection(view->spatialReference().getWKT().c_str());
+        }
+    }
+
+    // if we have a valid file
+    if (mpDstDS)
+    {
+        // loop over the raster and determine max slope at each location
+        int cs = 1, ce = cols - 1;
+        int rs = 1, re = rows - 1;
+        float *poRasterData = new float[cols*rows];
+        for (auto i=0; i<cols*rows; i++)
+        {
+            poRasterData[i] = std::numeric_limits<float>::min();
+        }
+        
+        using namespace Dimension;
+        using namespace Eigen;
+
+        // for each sx, sy sample location, compute the interpolate the value Z from spline control points cx, cy, cz
+        
+        auto sqrDist = [](double xi, double xj, double yi, double yj)
+        {
+            return (xi - xj) * (xi - xj) + (yi - yj) * (yi - yj);
+        };
+        
+        // PointViewPtr ctrl = view->makeNew();
+        // for (auto const& i : control)
+        // {
+        //     ctrl->appendPoint(*view, i);
+        // }
+        // 
+        // // Build the 2D KD-tree.
+        // KD2Index kd(*ctrl);
+        // kd.build();
+        
+        // VectorXd T = VectorXd::Zero(control.size());
+        // MatrixXd P = MatrixXd::Zero(control.size(), 3);
+        // MatrixXd K = MatrixXd::Zero(control.size(), control.size());
+        // 
+        // for (auto i = 0; i < control.size(); ++i)
+        // {
+        //     PointId ii = control[i];
+        //     double xi = view->getFieldAs<double>(Id::X, ii);
+        //     double yi = view->getFieldAs<double>(Id::Y, ii);
+        //     double zi = view->getFieldAs<double>(Id::Z, ii);
+        //     T(i) = zi;
+        //     P.row(i) << 1, xi, yi;
+        //     for (auto j = 0; j < control.size(); ++j)
+        //     {
+        //         PointId jj = control[j];
+        //         if (ii == jj)
+        //             continue;
+        //         double xj = view->getFieldAs<double>(Id::X, jj);
+        //         double yj = view->getFieldAs<double>(Id::Y, jj);
+        //         double rsqr = sqrDist(xi, xj, yi, yj);
+        //         K(i, j) = rsqr * std::log10(std::sqrt(rsqr));
+        //     }
+        // }
+        // // log()->get(LogLevel::Debug) << "T: " << T.transpose() << std::endl;
+        // // log()->get(LogLevel::Debug) << "P: " << P.transpose() << std::endl;
+        // // log()->get(LogLevel::Debug) << "K: " << K << std::endl;
+        // 
+        // MatrixXd A = MatrixXd::Zero(control.size()+3, control.size()+3);
+        // A.block(0,0,control.size(),control.size()) = K;
+        // A.block(0,control.size(),control.size(),3) = P;
+        // A.block(control.size(),0,3,control.size()) = P.transpose();
+        // 
+        // VectorXd b = VectorXd::Zero(control.size()+3);
+        // b.head(control.size()) = T;
+        // 
+        // VectorXd x = A.fullPivHouseholderQr().solve(b);
+        // 
+        // Vector3d a = x.tail(3);
+        // VectorXd w = x.head(control.size());
+        
+        ArrayXd xarr(control.size());
+        ArrayXd yarr(control.size());
+        for (auto j = 0; j < control.size(); ++j)
+        {
+            PointId jj = control[j];
+            xarr(j) = view->getFieldAs<double>(Id::X, jj);
+            yarr(j) = view->getFieldAs<double>(Id::Y, jj);
+        }
+        
+        ArrayXd warr = w.array();
+        
+        #pragma omp parallel for
+        for (auto c = cs; c < ce; ++c)
+        {
+            double xk = m_bounds.minx + (c+0.5)*2*m_cellSize;
+            ArrayXd xdiff = xk - xarr;
+            // log()->get(LogLevel::Debug) << "xd: " << xdiff << std::endl;
+            ArrayXd xdiff2 = xdiff * xdiff;
+                  
+            for (auto r = rs; r < re; ++r)
+            {
+              std::cerr << warr.size() << std::endl;
+              // std::cerr << w.array().size() << std::endl;
+              log()->get(LogLevel::Debug) << "w: " << warr << std::endl;
+              
+                  double yk = m_maxRow - (r+0.5)*2*m_cellSize;
+                  ArrayXd ydiff = yk - yarr;
+                  // log()->get(LogLevel::Debug) << "yk: " << yk << std::endl;
+                  // log()->get(LogLevel::Debug) << "yarr: " << yarr << std::endl;
+                  // log()->get(LogLevel::Debug) << "yd: " << ydiff << std::endl;
+                  ArrayXd ydiff2 = ydiff * ydiff;
+                  ArrayXd rsqr = xdiff2 + ydiff2;
+                  ArrayXd parts = warr * rsqr * rsqr.sqrt().log();
+                  double sum = parts.sum();
+                  
+                  // log()->get(LogLevel::Debug) << "rsqr: " << rsqr << std::endl;
+                  // log()->get(LogLevel::Debug) << "logrsqr: " << rsqr.sqrt().log() << std::endl;
+                  // log()->get(LogLevel::Debug) << "rsqrtlogrsqr: " << rsqr*rsqr.sqrt().log() << std::endl;
+                  // log()->get(LogLevel::Debug) << "parts: " << parts << std::endl;
+                  // log()->get(LogLevel::Debug) << "sum: " <<  sum << std::endl;
+                  
+                  
+                  // double sum = 0.0;
+                  // for (auto j = 0; j < control.size(); ++j)
+                  // {
+                  //     PointId jj = control[j];
+                  //     double xj = view->getFieldAs<double>(Id::X, jj);
+                  //     double yj = view->getFieldAs<double>(Id::Y, jj);
+                  //     double rsqr = sqrDist(xk, xj, yk, yj);
+                  //     sum += w(j) * rsqr * std::log10(std::sqrt(rsqr));
+                  // }
+              
+                poRasterData[(r * cols) + c] = a(0) + a(1)*xk + a(2)*yk + sum;
+            }
+        }
+
+        // write the data
+        if (poRasterData)
+        {
+            GDALRasterBand *tBand = mpDstDS->GetRasterBand(1);
+
+            tBand->SetNoDataValue(std::numeric_limits<float>::min());
+
+            if (cols > 0 && rows > 0)
+#if GDAL_VERSION_MAJOR <= 1
+                tBand->RasterIO(GF_Write, 0, 0, cols, rows,
+                                poRasterData, cols, rows,
+                                GDT_Float32, 0, 0);
+#else
+
+                int ret = tBand->RasterIO(GF_Write, 0, 0, cols, rows,
+                                          poRasterData, cols, rows,
+                                          GDT_Float32, 0, 0, 0);
+#endif
+        }
+
+        GDALClose((GDALDatasetH) mpDstDS);
+
+        delete [] poRasterData;
+    }
+}
+
 void MongusFilter::writeControl(Eigen::MatrixXd cx, Eigen::MatrixXd cy, Eigen::MatrixXd cz, std::string filename)
 {
     using namespace Dimension;
@@ -391,11 +715,14 @@ std::vector<PointId> MongusFilter::processGround(PointViewPtr view)
     m_maxRow = m_bounds.miny + m_numRows * m_cellSize;
 
     // create control points matrix at default cell size
-    MatrixXd cx(m_numRows, m_numCols);
-    cx.setConstant(std::numeric_limits<double>::quiet_NaN());
-
-    MatrixXd cy(m_numRows, m_numCols);
-    cy.setConstant(std::numeric_limits<double>::quiet_NaN());
+    // MatrixXd cx(m_numRows, m_numCols);
+    // cx.setConstant(std::numeric_limits<double>::quiet_NaN());
+    // 
+    // MatrixXd cy(m_numRows, m_numCols);
+    // cy.setConstant(std::numeric_limits<double>::quiet_NaN());
+    
+    MatrixXi ci(m_numRows, m_numCols);
+    ci.setConstant(std::numeric_limits<int>::quiet_NaN());
 
     MatrixXd cz(m_numRows, m_numCols);
     cz.setConstant(std::numeric_limits<double>::max());
@@ -412,9 +739,8 @@ std::vector<PointId> MongusFilter::processGround(PointViewPtr view)
 
         if (z < cz(r, c))
         {
-            cx(r, c) = x;
-            cy(r, c) = y;
             cz(r, c) = z;
+            ci(r, c) = i;
         }
     }
 
@@ -430,207 +756,225 @@ std::vector<PointId> MongusFilter::processGround(PointViewPtr view)
     for (auto i = 0; i < cz.size(); ++i)
     {
         if ((mc(i) - cz(i)) >= 1.0)
-            cz(i) = mc(i);
+        {
+            cz(i) = std::numeric_limits<double>::max();
+            ci(i) = std::numeric_limits<int>::quiet_NaN();
+        }
+            // cz(i) = mc(i);
     }
 
     // downsample control at max_level
     int level = m_l;
     double cur_cell_size = m_cellSize * std::pow(2, level-1);
 
-    MatrixXd dcx, dcy, dcz;
+    // MatrixXd dcx, dcy, dcz;
 
     // Top-level control samples are assumed to be ground points, no filtering
     // is applied.
-    downsampleMin(&cx, &cy, &cz, &dcx, &dcy, &dcz, cur_cell_size);
+    std::vector<PointId> control = downsampleMin(ci, cz, level);
+    log()->get(LogLevel::Debug) << control.size() << " control indices at level " << level << std::endl;
 
     // Point-filtering is performed iteratively at each level of the
     // control-points hierarchy in a top-down fashion
-    for (auto l = level-1; l > 0; --l)
+    for (auto l = level-1; l > 1; --l)
     {
         std::cerr << "Level " << l << std::endl;
 
         // compute TPS with update control at level
 
-        // The interpolated surface is estimated based on the filtered set of
-        // TPS control-points at the previous level of hierarchy
-        MatrixXd surface = TPS(dcx, dcy, dcz, cur_cell_size);
-
         // downsample control at level
         cur_cell_size /= 2;
-        downsampleMin(&cx, &cy, &cz, &dcx, &dcy, &dcz, cur_cell_size);
-
-        MatrixXd R = computeResidual(dcz, surface);
-        MatrixXd maxZ = matrixOpen(R, 2*l);
-        MatrixXd T = R - maxZ;
-        MatrixXd t = computeThresholds(T, 2*l);
-
-        // the time complexity of the approach is reduced by filtering only the
-        // control-points in each iteration
-        for (auto c = 0; c < T.cols(); ++c)
-        {
-            for (auto r = 0; r < T.rows(); ++r)
-            {
-                // If the TPS control-point is recognized as a non-ground point,
-                // it is replaced by the interpolated point.
-                if (T(r,c) > t(r,c))
-                {
-                    int rr = std::floor(r/2);
-                    int cc = std::floor(c/2);
-                    int rs = cur_cell_size * r;
-                    int cs = cur_cell_size * c;
-                    MatrixXd block = cz.block(rs, cs, cur_cell_size, cur_cell_size);
-                    MatrixXd::Index ri, ci;
-                    block.minCoeff(&ri, &ci);
-
-                    ri += rs;
-                    ci += cs;
-
-                    dcz(r, c) = surface(rr, cc);
-                    cz(ri, ci) = surface(rr, cc);
-                }
-            }
-        }
-
-        if (log()->getLevel() > LogLevel::Debug5)
-        {
-            char buffer[256];
-            sprintf(buffer, "surface_%d.tif", l);
-            std::string name(buffer);
-            writeMatrix(surface, name, cur_cell_size, view);
-
-            char bufm[256];
-            sprintf(bufm, "master_control_%d.laz", l);
-            std::string namem(bufm);
-            writeControl(cx, cy, cz, namem);
-
-            // this is identical to filtered control when written here - should move it...
-            char buf3[256];
-            sprintf(buf3, "control_%d.laz", l);
-            std::string name3(buf3);
-            writeControl(dcx, dcy, dcz, name3);
-
-            char rbuf[256];
-            sprintf(rbuf, "residual_%d.tif", l);
-            std::string rbufn(rbuf);
-            writeMatrix(R, rbufn, cur_cell_size, view);
-
-            char obuf[256];
-            sprintf(obuf, "open_%d.tif", l);
-            std::string obufn(obuf);
-            writeMatrix(maxZ, obufn, cur_cell_size, view);
-
-            char Tbuf[256];
-            sprintf(Tbuf, "tophat_%d.tif", l);
-            std::string Tbufn(Tbuf);
-            writeMatrix(T, Tbufn, cur_cell_size, view);
-
-            char tbuf[256];
-            sprintf(tbuf, "thresh_%d.tif", l);
-            std::string tbufn(tbuf);
-            writeMatrix(t, tbufn, cur_cell_size, view);
-
-            char buf2[256];
-            sprintf(buf2, "filtered_control_%d.laz", l);
-            std::string name2(buf2);
-            writeControl(dcx, dcy, dcz, name2);
-        }
+        std::vector<PointId> samples = downsampleMin(ci, cz, l);
+        log()->get(LogLevel::Debug) << samples.size() << " samples indices at level " << l << std::endl;
+        
+        // The interpolated surface is estimated based on the filtered set of
+        // TPS control-points at the previous level of hierarchy
+        // MatrixXd surface = TPS(dcx, dcy, dcz, cur_cell_size);
+        Vector3d a = Vector3d::Zero();
+        VectorXd w = VectorXd::Zero(control.size());
+        std::vector<PointId> newcontrol = spline(view, samples, control, a, w);
+        std::cerr << a.transpose() << std::endl;
+        std::cerr << w.transpose() << std::endl;
+        log()->get(LogLevel::Debug) << newcontrol.size() << " samples are kept for the next iteration\n";
+        
+        control.swap(newcontrol);
+        
+        char buf[256];
+        sprintf(buf, "surf_%d.tif", l);
+        std::string name(buf);
+        writeSurface(name, view, control, a, w);
+        
+        // MatrixXd R = computeResidual(dcz, surface);
+        // MatrixXd maxZ = matrixOpen(R, 2*l);
+        // MatrixXd T = R - maxZ;
+        // MatrixXd t = computeThresholds(T, 2*l);
+        // 
+        // // the time complexity of the approach is reduced by filtering only the
+        // // control-points in each iteration
+        // for (auto c = 0; c < T.cols(); ++c)
+        // {
+        //     for (auto r = 0; r < T.rows(); ++r)
+        //     {
+        //         // If the TPS control-point is recognized as a non-ground point,
+        //         // it is replaced by the interpolated point.
+        //         if (T(r,c) > t(r,c))
+        //         {
+        //             int rr = std::floor(r/2);
+        //             int cc = std::floor(c/2);
+        //             int rs = cur_cell_size * r;
+        //             int cs = cur_cell_size * c;
+        //             MatrixXd block = cz.block(rs, cs, cur_cell_size, cur_cell_size);
+        //             MatrixXd::Index ri, ci;
+        //             block.minCoeff(&ri, &ci);
+        // 
+        //             ri += rs;
+        //             ci += cs;
+        // 
+        //             dcz(r, c) = surface(rr, cc);
+        //             cz(ri, ci) = surface(rr, cc);
+        //         }
+        //     }
+        // }
+        // 
+        // if (log()->getLevel() > LogLevel::Debug5)
+        // {
+        //     char buffer[256];
+        //     sprintf(buffer, "surface_%d.tif", l);
+        //     std::string name(buffer);
+        //     writeMatrix(surface, name, cur_cell_size, view);
+        // 
+        //     char bufm[256];
+        //     sprintf(bufm, "master_control_%d.laz", l);
+        //     std::string namem(bufm);
+        //     // writeControl(cx, cy, cz, namem);
+        // 
+        //     // this is identical to filtered control when written here - should move it...
+        //     char buf3[256];
+        //     sprintf(buf3, "control_%d.laz", l);
+        //     std::string name3(buf3);
+        //     // writeControl(dcx, dcy, dcz, name3);
+        // 
+        //     char rbuf[256];
+        //     sprintf(rbuf, "residual_%d.tif", l);
+        //     std::string rbufn(rbuf);
+        //     writeMatrix(R, rbufn, cur_cell_size, view);
+        // 
+        //     char obuf[256];
+        //     sprintf(obuf, "open_%d.tif", l);
+        //     std::string obufn(obuf);
+        //     writeMatrix(maxZ, obufn, cur_cell_size, view);
+        // 
+        //     char Tbuf[256];
+        //     sprintf(Tbuf, "tophat_%d.tif", l);
+        //     std::string Tbufn(Tbuf);
+        //     writeMatrix(T, Tbufn, cur_cell_size, view);
+        // 
+        //     char tbuf[256];
+        //     sprintf(tbuf, "thresh_%d.tif", l);
+        //     std::string tbufn(tbuf);
+        //     writeMatrix(t, tbufn, cur_cell_size, view);
+        // 
+        //     char buf2[256];
+        //     sprintf(buf2, "filtered_control_%d.laz", l);
+        //     std::string name2(buf2);
+        //     // writeControl(dcx, dcy, dcz, name2);
+        // }
     }
 
-    MatrixXd surface = TPS(dcx, dcy, dcz, cur_cell_size);
-    MatrixXd R = computeResidual(cz, surface);
-    MatrixXd maxZ = matrixOpen(R, 2);
-    MatrixXd T = R - maxZ;
-    MatrixXd t = computeThresholds(T, 2);
-
-    if (log()->getLevel() > LogLevel::Debug5)
-    {
-        writeControl(cx, cy, mc, "closed.laz");
-
-        char buffer[256];
-        sprintf(buffer, "final_surface.tif");
-        std::string name(buffer);
-        writeMatrix(surface, name, cur_cell_size, view);
-
-        char rbuf[256];
-        sprintf(rbuf, "final_residual.tif");
-        std::string rbufn(rbuf);
-        writeMatrix(R, rbufn, cur_cell_size, view);
-
-        char obuf[256];
-        sprintf(obuf, "final_opened.tif");
-        std::string obufn(obuf);
-        writeMatrix(maxZ, obufn, cur_cell_size, view);
-
-        char Tbuf[256];
-        sprintf(Tbuf, "final_tophat.tif");
-        std::string Tbufn(Tbuf);
-        writeMatrix(T, Tbufn, cur_cell_size, view);
-
-        char tbuf[256];
-        sprintf(tbuf, "final_thresh.tif");
-        std::string tbufn(tbuf);
-        writeMatrix(t, tbufn, cur_cell_size, view);
-    }
+    // MatrixXd surface = TPS(dcx, dcy, dcz, cur_cell_size);
+    // MatrixXd R = computeResidual(cz, surface);
+    // MatrixXd maxZ = matrixOpen(R, 2);
+    // MatrixXd T = R - maxZ;
+    // MatrixXd t = computeThresholds(T, 2);
+    // 
+    // if (log()->getLevel() > LogLevel::Debug5)
+    // {
+    //     // writeControl(cx, cy, mc, "closed.laz");
+    // 
+    //     char buffer[256];
+    //     sprintf(buffer, "final_surface.tif");
+    //     std::string name(buffer);
+    //     writeMatrix(surface, name, cur_cell_size, view);
+    // 
+    //     char rbuf[256];
+    //     sprintf(rbuf, "final_residual.tif");
+    //     std::string rbufn(rbuf);
+    //     writeMatrix(R, rbufn, cur_cell_size, view);
+    // 
+    //     char obuf[256];
+    //     sprintf(obuf, "final_opened.tif");
+    //     std::string obufn(obuf);
+    //     writeMatrix(maxZ, obufn, cur_cell_size, view);
+    // 
+    //     char Tbuf[256];
+    //     sprintf(Tbuf, "final_tophat.tif");
+    //     std::string Tbufn(Tbuf);
+    //     writeMatrix(T, Tbufn, cur_cell_size, view);
+    // 
+    //     char tbuf[256];
+    //     sprintf(tbuf, "final_thresh.tif");
+    //     std::string tbufn(tbuf);
+    //     writeMatrix(t, tbufn, cur_cell_size, view);
+    // }
 
     // apply final filtering (top hat) using raw points against TPS
 
-    // ...the LiDAR points are filtered only at the bottom level.
-    for (auto i = 0; i < np; ++i)
-    {
-        using namespace Dimension;
-        
-        double x = view->getFieldAs<double>(Id::X, i);
-        double y = view->getFieldAs<double>(Id::Y, i);
-        double z = view->getFieldAs<double>(Id::Z, i);
-
-        int c = clamp(getColIndex(x, cur_cell_size), 0, m_numCols-1);
-        int r = clamp(getRowIndex(y, cur_cell_size), 0, m_numRows-1);
-
-        double res = z - surface(r, c);
-        if (res < t(r, c))
-            groundIdx.push_back(i);
-    }
+    // // ...the LiDAR points are filtered only at the bottom level.
+    // for (auto i = 0; i < np; ++i)
+    // {
+    //     using namespace Dimension;
+    // 
+    //     double x = view->getFieldAs<double>(Id::X, i);
+    //     double y = view->getFieldAs<double>(Id::Y, i);
+    //     double z = view->getFieldAs<double>(Id::Z, i);
+    // 
+    //     int c = clamp(getColIndex(x, cur_cell_size), 0, m_numCols-1);
+    //     int r = clamp(getRowIndex(y, cur_cell_size), 0, m_numRows-1);
+    // 
+    //     double res = z - surface(r, c);
+    //     if (res < t(r, c))
+    //         groundIdx.push_back(i);
+    // }
+    
+    groundIdx.swap(control);
 
     return groundIdx;
 }
 
-void MongusFilter::downsampleMin(Eigen::MatrixXd *cx, Eigen::MatrixXd *cy,
-                                 Eigen::MatrixXd* cz, Eigen::MatrixXd *dcx,
-                                 Eigen::MatrixXd *dcy, Eigen::MatrixXd* dcz,
-                                 double cell_size)
+std::vector<PointId> MongusFilter::downsampleMin(Eigen::MatrixXi ci,
+                                 Eigen::MatrixXd cz,
+                                 int level)
 {
-    int nr = ceil(cz->rows() / cell_size);
-    int nc = ceil(cz->cols() / cell_size);
+    using namespace Eigen;
+    
+    assert(ci.rows() == cz.rows());
+    assert(ci.cols() == cz.cols());
+    
+    std::cerr << cz.rows() << "\t" << cz.cols() << std::endl;
+    
+    int step = std::pow(2, level);
+    log()->get(LogLevel::Debug) << "Downsampling at level " << level
+                                << " with step size of " << step << std::endl;
+    std::vector<PointId> ids;
 
-    // std::cerr << nr << "\t" << nc << "\t" << cell_size << std::endl;
-
-    dcx->resize(nr, nc);
-    dcx->setConstant(std::numeric_limits<double>::quiet_NaN());
-
-    dcy->resize(nr, nc);
-    dcy->setConstant(std::numeric_limits<double>::quiet_NaN());
-
-    dcz->resize(nr, nc);
-    dcz->setConstant(std::numeric_limits<double>::max());
-
-    for (auto c = 0; c < cz->cols(); ++c)
+    for (auto c = 0; c < cz.cols(); c+=step)
     {
-        for (auto r = 0; r < cz->rows(); ++r)
+        for (auto r = 0; r < cz.rows(); r+=step)
         {
-            if ((*cz)(r, c) == std::numeric_limits<double>::max())
-                continue;
-
-            int rr = std::floor(r/cell_size);
-            int cc = std::floor(c/cell_size);
-
-            if ((*cz)(r, c) < (*dcz)(rr, cc))
-            {
-                (*dcx)(rr, cc) = (*cx)(r, c);
-                (*dcy)(rr, cc) = (*cy)(r, c);
-                (*dcz)(rr, cc) = (*cz)(r, c);
-            }
+            int re = clamp(r+step, 0, cz.rows());
+            int ce = clamp(c+step, 0, cz.cols());
+            int rsize = re - r;
+            int csize = ce - c;
+            // log()->get(LogLevel::Debug) << "row: " << r << "\t" << re << "\t" << rsize << std::endl;
+            // log()->get(LogLevel::Debug) << "col: " << c << "\t" << ce << "\t" << csize << std::endl;
+            MatrixXd::Index minRow, minCol;
+            cz.block(r, c, rsize, csize).minCoeff(&minRow, &minCol);
+            ids.push_back(ci.block(r, c, rsize, csize)(minRow, minCol));
+            // log()->get(LogLevel::Debug) << cz.block(r, c, rsize, csize)(minRow, minCol) << "\t" << ci.block(r, c, rsize, csize)(minRow, minCol) << std::endl;
         }
     }
+    
+    return ids;
 }
 
 Eigen::MatrixXd MongusFilter::computeResidual(Eigen::MatrixXd cz,

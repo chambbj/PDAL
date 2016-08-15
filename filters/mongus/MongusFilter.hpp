@@ -90,12 +90,14 @@ private:
     Eigen::MatrixXd computeResidual(Eigen::MatrixXd cz,
                                     Eigen::MatrixXd surface);
     Eigen::MatrixXd computeThresholds(Eigen::MatrixXd T, int radius);
-    void downsampleMin(Eigen::MatrixXd *cx, Eigen::MatrixXd *cy,
-                       Eigen::MatrixXd* cz, Eigen::MatrixXd *dcx,
-                       Eigen::MatrixXd *dcy, Eigen::MatrixXd* dcz,
-                       double cell_size);
+    std::vector<PointId> downsampleMin(Eigen::MatrixXi ci,
+                       Eigen::MatrixXd cz,
+                       int level);
     std::vector<PointId> processGround(PointViewPtr view);
     virtual PointViewSet run(PointViewPtr view);
+    std::vector<PointId> spline(PointViewPtr view, std::vector<PointId> samples,
+                               std::vector<PointId> control, Eigen::Ref<Eigen::Vector3d> a, Eigen::Ref<Eigen::VectorXd> w);
+   void writeSurface(std::string filename, PointViewPtr view, std::vector<PointId> control, Eigen::Vector3d a, Eigen::VectorXd w);
 
     MongusFilter& operator=(const MongusFilter&); // not implemented
     MongusFilter(const MongusFilter&); // not implemented
