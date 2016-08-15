@@ -1092,17 +1092,18 @@ std::map<int, std::map<PointId, std::vector<PointId> > > MongusFilter::buildLeve
             localCi.conservativeResize(std::ceil(cz.rows()/step),std::ceil(cz.cols()/step));
         }
         
+        int radius = 5;
         std::map<PointId, std::vector<PointId> > mymap;
         for (auto c = 0; c < localCi.cols(); ++c)
         {
             for (auto r = 0; r < localCi.rows(); ++r)
             {
                 // insert into map the pair of PointId at ci(r, c) to neighbors in +/- 3 cells at current level
-                int rs = clamp(r-3, 0, localCi.rows());
-                int re = clamp(r+3, 0, localCi.rows());
+                int rs = clamp(r-radius, 0, localCi.rows());
+                int re = clamp(r+radius, 0, localCi.rows());
                 int rsize = re-rs;
-                int cs = clamp(c-3, 0, localCi.cols());
-                int ce = clamp(c+3, 0, localCi.cols());
+                int cs = clamp(c-radius, 0, localCi.cols());
+                int ce = clamp(c+radius, 0, localCi.cols());
                 int csize = ce-cs;
                 MatrixXi b = localCi.block(rs, cs, rsize, csize); // these are the neighbors or ci(r, c)
                 std::vector<PointId> neighbors(b.size());
