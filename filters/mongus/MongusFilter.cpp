@@ -34,7 +34,7 @@
 
 #include "MongusFilter.hpp"
 
-// #include <pdal/KDIndex.hpp>
+#include <pdal/KDIndex.hpp>
 #include <pdal/pdal_macros.hpp>
 #include <pdal/PipelineManager.hpp>
 #include <buffer/BufferReader.hpp>
@@ -91,7 +91,7 @@ int MongusFilter::getRowIndex(double y, double cell_size)
     return static_cast<int>(floor((m_maxRow - y) / cell_size));
 }
 
-void MongusFilter::computeSpline(PointViewPtr view, std::vector<PointId> control, Eigen::Ref<Eigen::Vector3d> a, Eigen::Ref<Eigen::VectorXd> w)
+void MongusFilter::computeSpline(PointViewPtr view, std::vector<PointId> control, Eigen::Ref<Eigen::Vector3d> a, Eigen::Ref<Eigen::VectorXd> w, std::map<PointId, std::vector<PointId> > mymap)
 {
     using namespace Dimension;
     using namespace Eigen;
@@ -115,9 +115,11 @@ void MongusFilter::computeSpline(PointViewPtr view, std::vector<PointId> control
         double zi = view->getFieldAs<double>(Id::Z, ii);
         T(i) = zi;
         P.row(i) << 1, xi, yi;
-        for (auto j = 0; j < control.size(); ++j)
+        
+        std::vector<PointId> neighbors = mymap[ii];
+        for (auto j = 0; j < neighbors.size(); ++j)
         {
-            PointId jj = control[j];
+            PointId jj = neighbors[j];
             if (ii == jj)
                 continue;
             double xj = view->getFieldAs<double>(Id::X, jj);
@@ -143,7 +145,7 @@ void MongusFilter::computeSpline(PointViewPtr view, std::vector<PointId> control
 
 std::vector<PointId> MongusFilter::interpolateSpline(PointViewPtr view,
         std::vector<PointId> samples,
-        std::vector<PointId> control, Eigen::Vector3d a, Eigen::VectorXd w)
+        std::vector<PointId> control, std::map<PointId, std::vector<PointId> > mymap)
 {
     using namespace Dimension;
     using namespace Eigen;
@@ -170,11 +172,53 @@ std::vector<PointId> MongusFilter::interpolateSpline(PointViewPtr view,
         // only for debugging
         double zk = view->getFieldAs<double>(Id::Z, kk);
         // log()->get(LogLevel::Debug) << "Interpolating spline at (" << xk << "," << yk << "," << zk << ")...\n";
+        
+        std::vector<PointId> neighbors = mymap[kk];
+        
+        // log()->get(LogLevel::Debug) << "interpolateSpline: Computing spline with " << neighbors.size() << " neigbors\n";
+
+        VectorXd T = VectorXd::Zero(neighbors.size());
+        MatrixXd P = MatrixXd::Zero(neighbors.size(), 3);
+        MatrixXd K = MatrixXd::Zero(neighbors.size(), neighbors.size());
+        
+        for (auto i = 0; i < neighbors.size(); ++i)
+        {
+            PointId ii = neighbors[i];
+            double xi = view->getFieldAs<double>(Id::X, ii);
+            double yi = view->getFieldAs<double>(Id::Y, ii);
+            double zi = view->getFieldAs<double>(Id::Z, ii);
+            T(i) = zi;
+            P.row(i) << 1, xi, yi;
+            
+            for (auto j = 0; j < neighbors.size(); ++j)
+            {
+                PointId jj = neighbors[j];
+                if (ii == jj)
+                    continue;
+                double xj = view->getFieldAs<double>(Id::X, jj);
+                double yj = view->getFieldAs<double>(Id::Y, jj);
+                double rsqr = sqrDist(xi, xj, yi, yj);
+                K(i, j) = rsqr * std::log10(std::sqrt(rsqr));
+            }
+        }
+        
+        MatrixXd A = MatrixXd::Zero(neighbors.size()+3, neighbors.size()+3);
+        A.block(0,0,neighbors.size(),neighbors.size()) = K;
+        A.block(0,neighbors.size(),neighbors.size(),3) = P;
+        A.block(neighbors.size(),0,3,neighbors.size()) = P.transpose();
+
+        VectorXd b = VectorXd::Zero(neighbors.size()+3);
+        b.head(neighbors.size()) = T;
+
+        VectorXd x = A.colPivHouseholderQr().solve(b);
+
+        Vector3d a = x.tail(3);
+        VectorXd w = x.head(neighbors.size());
 
         double sum = 0.0;
-        for (auto j = 0; j < control.size(); ++j)
+        for (auto j = 0; j < neighbors.size(); ++j)
         {
-            PointId jj = control[j];
+            PointId jj = neighbors[j];
             if (kk == jj)
                 continue;
             double xj = view->getFieldAs<double>(Id::X, jj);
@@ -471,12 +515,12 @@ void MongusFilter::writeMatrix(Eigen::MatrixXd data, std::string filename, doubl
     }
 }
 
-void MongusFilter::writeSurface(std::string filename, PointViewPtr view, std::vector<PointId> control, Eigen::Vector3d a, Eigen::VectorXd w)
+void MongusFilter::writeSurface(std::string filename, PointViewPtr view, std::vector<PointId> control, std::map<PointId, std::vector<PointId> > mymap)
 {
   // std::cerr << w.transpose() << std::endl;
   // std::cerr << w.size() << std::endl;
-    int cols = m_numCols/2;
-    int rows = m_numRows/2;
+    int cols = m_numCols;
+    int rows = m_numRows;
 
     GDALAllRegister();
 
@@ -503,11 +547,11 @@ void MongusFilter::writeSurface(std::string filename, PointViewPtr view, std::ve
             // set the geo transformation
             double adfGeoTransform[6];
             adfGeoTransform[0] = m_bounds.minx; // - 0.5*m_GRID_DIST_X;
-            adfGeoTransform[1] = m_cellSize*2;
+            adfGeoTransform[1] = m_cellSize;
             adfGeoTransform[2] = 0.0;
             adfGeoTransform[3] = m_bounds.maxy; // + 0.5*m_GRID_DIST_Y;
             adfGeoTransform[4] = 0.0;
-            adfGeoTransform[5] = -1 * m_cellSize*2;
+            adfGeoTransform[5] = -1 * m_cellSize;
             mpDstDS->SetGeoTransform(adfGeoTransform);
 
             // set the projection
@@ -537,15 +581,15 @@ void MongusFilter::writeSurface(std::string filename, PointViewPtr view, std::ve
             return (xi - xj) * (xi - xj) + (yi - yj) * (yi - yj);
         };
         
-        // PointViewPtr ctrl = view->makeNew();
-        // for (auto const& i : control)
-        // {
-        //     ctrl->appendPoint(*view, i);
-        // }
-        // 
-        // // Build the 2D KD-tree.
-        // KD2Index kd(*ctrl);
-        // kd.build();
+        PointViewPtr ctrl = view->makeNew();
+        for (auto const& i : control)
+        {
+            ctrl->appendPoint(*view, i);
+        }
+        
+        // Build the 2D KD-tree.
+        KD2Index kd(*ctrl);
+        kd.build();
         
         // VectorXd T = VectorXd::Zero(control.size());
         // MatrixXd P = MatrixXd::Zero(control.size(), 3);
@@ -587,24 +631,24 @@ void MongusFilter::writeSurface(std::string filename, PointViewPtr view, std::ve
         // Vector3d a = x.tail(3);
         // VectorXd w = x.head(control.size());
         
-        ArrayXd xarr(control.size());
-        ArrayXd yarr(control.size());
-        for (auto j = 0; j < control.size(); ++j)
-        {
-            PointId jj = control[j];
-            xarr(j) = view->getFieldAs<double>(Id::X, jj);
-            yarr(j) = view->getFieldAs<double>(Id::Y, jj);
-        }
-        
-        ArrayXd warr = w.array();
+        // ArrayXd xarr(control.size());
+        // ArrayXd yarr(control.size());
+        // for (auto j = 0; j < control.size(); ++j)
+        // {
+        //     PointId jj = control[j];
+        //     xarr(j) = view->getFieldAs<double>(Id::X, jj);
+        //     yarr(j) = view->getFieldAs<double>(Id::Y, jj);
+        // }
+        // 
+        // ArrayXd warr = w.array();
         
         #pragma omp parallel for
         for (auto c = cs; c < ce; ++c)
         {
-            double xk = m_bounds.minx + (c+0.5)*2*m_cellSize;
-            ArrayXd xdiff = xk - xarr;
+            double xk = m_bounds.minx + (c+0.5)*m_cellSize;
+            // ArrayXd xdiff = xk - xarr;
             // log()->get(LogLevel::Debug) << "xd: " << xdiff << std::endl;
-            ArrayXd xdiff2 = xdiff * xdiff;
+            // ArrayXd xdiff2 = xdiff * xdiff;
                   
             for (auto r = rs; r < re; ++r)
             {
@@ -612,15 +656,58 @@ void MongusFilter::writeSurface(std::string filename, PointViewPtr view, std::ve
               // std::cerr << w.array().size() << std::endl;
               // log()->get(LogLevel::Debug) << "w: " << warr << std::endl;
               
-                  double yk = m_maxRow - (r+0.5)*2*m_cellSize;
-                  ArrayXd ydiff = yk - yarr;
+                  double yk = m_maxRow - (r+0.5)*m_cellSize;
+                  // ArrayXd ydiff = yk - yarr;
+                  
+                  std::vector<PointId> nearest = kd.neighbors(xk, yk, 1);
+                  
+                  std::vector<PointId> neighbors = mymap[control[nearest[0]]];
+
+                  VectorXd T = VectorXd::Zero(neighbors.size());
+                  MatrixXd P = MatrixXd::Zero(neighbors.size(), 3);
+                  MatrixXd K = MatrixXd::Zero(neighbors.size(), neighbors.size());
+                  
+                  for (auto i = 0; i < neighbors.size(); ++i)
+                  {
+                      PointId ii = neighbors[i];
+                      double xi = view->getFieldAs<double>(Id::X, ii);
+                      double yi = view->getFieldAs<double>(Id::Y, ii);
+                      double zi = view->getFieldAs<double>(Id::Z, ii);
+                      T(i) = zi;
+                      P.row(i) << 1, xi, yi;
+                      
+                      for (auto j = 0; j < neighbors.size(); ++j)
+                      {
+                          PointId jj = neighbors[j];
+                          if (ii == jj)
+                              continue;
+                          double xj = view->getFieldAs<double>(Id::X, jj);
+                          double yj = view->getFieldAs<double>(Id::Y, jj);
+                          double rsqr = sqrDist(xi, xj, yi, yj);
+                          K(i, j) = rsqr * std::log10(std::sqrt(rsqr));
+                      }
+                  }
+                  
+                  MatrixXd A = MatrixXd::Zero(neighbors.size()+3, neighbors.size()+3);
+                  A.block(0,0,neighbors.size(),neighbors.size()) = K;
+                  A.block(0,neighbors.size(),neighbors.size(),3) = P;
+                  A.block(neighbors.size(),0,3,neighbors.size()) = P.transpose();
+
+                  VectorXd b = VectorXd::Zero(neighbors.size()+3);
+                  b.head(neighbors.size()) = T;
+
+                  VectorXd x = A.colPivHouseholderQr().solve(b);
+
+                  Vector3d a = x.tail(3);
+                  VectorXd w = x.head(neighbors.size());
+                  
                   // log()->get(LogLevel::Debug) << "yk: " << yk << std::endl;
                   // log()->get(LogLevel::Debug) << "yarr: " << yarr << std::endl;
                   // log()->get(LogLevel::Debug) << "yd: " << ydiff << std::endl;
-                  ArrayXd ydiff2 = ydiff * ydiff;
-                  ArrayXd rsqr = xdiff2 + ydiff2;
-                  ArrayXd parts = warr * rsqr * rsqr.sqrt().log();
-                  double sum = parts.sum();
+                  // ArrayXd ydiff2 = ydiff * ydiff;
+                  // ArrayXd rsqr = xdiff2 + ydiff2;
+                  // ArrayXd parts = w.array() * rsqr * rsqr.sqrt().log();
+                  // double sum = parts.sum();
                   
                   // log()->get(LogLevel::Debug) << "rsqr: " << rsqr << std::endl;
                   // log()->get(LogLevel::Debug) << "logrsqr: " << rsqr.sqrt().log() << std::endl;
@@ -629,15 +716,15 @@ void MongusFilter::writeSurface(std::string filename, PointViewPtr view, std::ve
                   // log()->get(LogLevel::Debug) << "sum: " <<  sum << std::endl;
                   
                   
-                  // double sum = 0.0;
-                  // for (auto j = 0; j < control.size(); ++j)
-                  // {
-                  //     PointId jj = control[j];
-                  //     double xj = view->getFieldAs<double>(Id::X, jj);
-                  //     double yj = view->getFieldAs<double>(Id::Y, jj);
-                  //     double rsqr = sqrDist(xk, xj, yk, yj);
-                  //     sum += w(j) * rsqr * std::log10(std::sqrt(rsqr));
-                  // }
+                  double sum = 0.0;
+                  for (auto j = 0; j < neighbors.size(); ++j)
+                  {
+                      PointId jj = neighbors[j];
+                      double xj = view->getFieldAs<double>(Id::X, jj);
+                      double yj = view->getFieldAs<double>(Id::Y, jj);
+                      double rsqr = sqrDist(xk, xj, yk, yj);
+                      sum += w(j) * rsqr * std::log10(std::sqrt(rsqr));
+                  }
               
                 poRasterData[(r * cols) + c] = a(0) + a(1)*xk + a(2)*yk + sum;
             }
@@ -769,6 +856,9 @@ std::vector<PointId> MongusFilter::processGround(PointViewPtr view)
         }
             // cz(i) = mc(i);
     }
+    
+    auto h = buildLevels(ci, cz);
+    log()->get(LogLevel::Debug) << "hierarchy supposedly build\n";
 
     // downsample control at max_level
     int level = m_l;
@@ -778,12 +868,20 @@ std::vector<PointId> MongusFilter::processGround(PointViewPtr view)
 
     // Top-level control samples are assumed to be ground points, no filtering
     // is applied.
-    std::vector<PointId> control = downsampleMin(ci, cz, level);
+    // std::vector<PointId> control = downsampleMin(ci, cz, level);
+    std::map<PointId, std::vector<PointId> > h0 = h[m_l];
+    std::cerr << h0.size() << " control at level 0\n";
+    std::vector<PointId> control(h0.size());
+    int i = 0;
+    for (auto const& hh : h0)
+    {
+        control[i++] = hh.first;
+    }
     log()->get(LogLevel::Debug) << control.size() << " control indices at level " << level << std::endl;
 
     // Point-filtering is performed iteratively at each level of the
     // control-points hierarchy in a top-down fashion
-    for (auto l = level-1; l > 1; --l)
+    for (auto l = level-1; l > 0; --l)
     {
         std::cerr << "Level " << l << std::endl;
 
@@ -791,16 +889,23 @@ std::vector<PointId> MongusFilter::processGround(PointViewPtr view)
 
         // downsample control at level
         cur_cell_size /= 2;
-        std::vector<PointId> samples = downsampleMin(ci, cz, l);
+        // std::vector<PointId> samples = downsampleMin(ci, cz, l);
+        std::map<PointId, std::vector<PointId> > hl = h[l];
+        std::vector<PointId> samples(hl.size());
+        int i = 0;
+        for (auto const& hh : hl)
+        {
+            samples[i++] = hh.first;
+        }
         log()->get(LogLevel::Debug) << samples.size() << " samples indices at level " << l << std::endl;
         
         // The interpolated surface is estimated based on the filtered set of
         // TPS control-points at the previous level of hierarchy
         // MatrixXd surface = TPS(dcx, dcy, dcz, cur_cell_size);
-        Vector3d a = Vector3d::Zero();
-        VectorXd w = VectorXd::Zero(control.size());
-        computeSpline(view, control, a, w);
-        std::vector<PointId> newcontrol = interpolateSpline(view, samples, control, a, w);
+        // Vector3d a = Vector3d::Zero();
+        // VectorXd w = VectorXd::Zero(control.size());
+        // computeSpline(view, control, a, w, h[l]);
+        std::vector<PointId> newcontrol = interpolateSpline(view, samples, control, h[l]);
         // std::cerr << a.transpose() << std::endl;
         // std::cerr << w.transpose() << std::endl;
         log()->get(LogLevel::Debug) << newcontrol.size() << " samples are kept for the next iteration\n";
@@ -810,10 +915,10 @@ std::vector<PointId> MongusFilter::processGround(PointViewPtr view)
         char buf[256];
         sprintf(buf, "surf_%d.tif", l);
         std::string name(buf);
-        Vector3d newa = Vector3d::Zero();
-        VectorXd neww = VectorXd::Zero(control.size());
-        computeSpline(view, control, newa, neww);
-        writeSurface(name, view, control, newa, neww);
+        // Vector3d newa = Vector3d::Zero();
+        // VectorXd neww = VectorXd::Zero(control.size());
+        // computeSpline(view, control, newa, neww, h[l]);
+        // writeSurface(name, view, control, h[l]);
         
         // MatrixXd R = computeResidual(dcz, surface);
         // MatrixXd maxZ = matrixOpen(R, 2*l);
@@ -952,6 +1057,70 @@ std::vector<PointId> MongusFilter::processGround(PointViewPtr view)
     return groundIdx;
 }
 
+std::map<int, std::map<PointId, std::vector<PointId> > > MongusFilter::buildLevels(Eigen::MatrixXi ci, Eigen::MatrixXd cz)
+{
+    using namespace Eigen;
+    
+    std::map<int, std::map<PointId, std::vector<PointId> > > hierarchy;
+    for (auto level = 0; level <= m_l; ++level)
+    {
+        MatrixXi localCi = ci;
+        if (level > 0)
+        {
+            int step = std::pow(2, level);
+            // localCi.resize(std::ceil(cz.rows()/step), std::ceil(cz.cols()/step));
+            log()->get(LogLevel::Debug) << "Downsampling at level " << level
+                                        << " with step size of " << step << std::endl;
+            log()->get(LogLevel::Debug) << localCi.rows() << "\t" << localCi.cols() << std::endl;
+                                        
+            for (auto c = 0; c < cz.cols(); c+=step)
+            {
+                for (auto r = 0; r < cz.rows(); r+=step)
+                {
+                    int re = clamp(r+step, 0, cz.rows());
+                    int ce = clamp(c+step, 0, cz.cols());
+                    int rsize = re - r;
+                    int csize = ce - c;
+                    
+                    MatrixXd::Index minRow, minCol;
+                    cz.block(r, c, rsize, csize).minCoeff(&minRow, &minCol);
+                    int rr = std::floor(r / step);
+                    int cc = std::floor(c / step);
+                    localCi(rr, cc) = ci.block(r, c, rsize, csize)(minRow, minCol);
+                }
+            }
+            localCi.conservativeResize(std::ceil(cz.rows()/step),std::ceil(cz.cols()/step));
+        }
+        
+        std::map<PointId, std::vector<PointId> > mymap;
+        for (auto c = 0; c < localCi.cols(); ++c)
+        {
+            for (auto r = 0; r < localCi.rows(); ++r)
+            {
+                // insert into map the pair of PointId at ci(r, c) to neighbors in +/- 3 cells at current level
+                int rs = clamp(r-3, 0, localCi.rows());
+                int re = clamp(r+3, 0, localCi.rows());
+                int rsize = re-rs;
+                int cs = clamp(c-3, 0, localCi.cols());
+                int ce = clamp(c+3, 0, localCi.cols());
+                int csize = ce-cs;
+                MatrixXi b = localCi.block(rs, cs, rsize, csize); // these are the neighbors or ci(r, c)
+                std::vector<PointId> neighbors(b.size());
+                for (auto i = 0; i < b.size(); ++i)
+                {
+                    neighbors[i] = b(i);
+                }
+                PointId key = localCi(r, c);
+                mymap[key] = neighbors;
+            }
+        }
+        
+        hierarchy[level] = mymap;
+    }
+    
+    return hierarchy;
+}
+
 std::vector<PointId> MongusFilter::downsampleMin(Eigen::MatrixXi ci,
                                  Eigen::MatrixXd cz,
                                  int level)
@@ -960,8 +1129,6 @@ std::vector<PointId> MongusFilter::downsampleMin(Eigen::MatrixXi ci,
     
     assert(ci.rows() == cz.rows());
     assert(ci.cols() == cz.cols());
-    
-    std::cerr << cz.rows() << "\t" << cz.cols() << std::endl;
     
     int step = std::pow(2, level);
     log()->get(LogLevel::Debug) << "Downsampling at level " << level
