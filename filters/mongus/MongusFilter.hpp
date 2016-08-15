@@ -79,27 +79,27 @@ private:
     int clamp(int t, int min, int max);
     int getColIndex(double x, double cell_size);
     int getRowIndex(double y, double cell_size);
-    Eigen::MatrixXd TPS(Eigen::MatrixXd cx, Eigen::MatrixXd cy,
-                        Eigen::MatrixXd cz, double cell_size);
     void writeMatrix(Eigen::MatrixXd data, std::string filename,
                      double cell_size, PointViewPtr view);
-    void writeControl(Eigen::MatrixXd cx, Eigen::MatrixXd cy, Eigen::MatrixXd cz, std::string filename);
+    void writeControl(Eigen::MatrixXd cx, Eigen::MatrixXd cy,
+                      Eigen::MatrixXd cz, std::string filename);
     Eigen::MatrixXd padMatrix(Eigen::MatrixXd data, int radius);
     Eigen::MatrixXd matrixOpen(Eigen::MatrixXd data, int radius);
     Eigen::MatrixXd matrixClose(Eigen::MatrixXd data, int radius);
     Eigen::MatrixXd computeResidual(Eigen::MatrixXd cz,
                                     Eigen::MatrixXd surface);
     Eigen::MatrixXd computeThresholds(Eigen::MatrixXd T, int radius);
-    std::vector<PointId> downsampleMin(Eigen::MatrixXi ci,
-                       Eigen::MatrixXd cz,
-                       int level);
     std::vector<PointId> processGround(PointViewPtr view);
     virtual PointViewSet run(PointViewPtr view);
-    std::vector<PointId> interpolateSpline(PointViewPtr view, std::vector<PointId> samples,
-                               std::vector<PointId> control, std::map<PointId, std::vector<PointId> > mymap);
-   void computeSpline(PointViewPtr view, std::vector<PointId> control, Eigen::Ref<Eigen::Vector3d> a, Eigen::Ref<Eigen::VectorXd> w, std::map<PointId, std::vector<PointId> > mymap);
+    std::vector<PointId> interpolateSpline(PointViewPtr view, 
+                                           std::vector<PointId> samples,
+                                           std::vector<PointId> control,
+                                           std::map<PointId,
+                                           std::vector<PointId> > mymap);
    std::map<int, std::map<PointId, std::vector<PointId> > > buildLevels(Eigen::MatrixXi ci, Eigen::MatrixXd cz);
-   void writeSurface(std::string filename, PointViewPtr view, std::vector<PointId> control, std::map<PointId, std::vector<PointId> > mymap);
+   void writeSurface(std::string filename, PointViewPtr view,
+                     std::vector<PointId> control,
+                     std::map<PointId, std::vector<PointId> > mymap);
 
     MongusFilter& operator=(const MongusFilter&); // not implemented
     MongusFilter(const MongusFilter&); // not implemented

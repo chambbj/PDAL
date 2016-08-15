@@ -91,58 +91,6 @@ int MongusFilter::getRowIndex(double y, double cell_size)
     return static_cast<int>(floor((m_maxRow - y) / cell_size));
 }
 
-void MongusFilter::computeSpline(PointViewPtr view, std::vector<PointId> control, Eigen::Ref<Eigen::Vector3d> a, Eigen::Ref<Eigen::VectorXd> w, std::map<PointId, std::vector<PointId> > mymap)
-{
-    using namespace Dimension;
-    using namespace Eigen;
-    
-    log()->get(LogLevel::Debug) << "Computing spline for " << control.size() << " samples\n";
-    
-    auto sqrDist = [](double xi, double xj, double yi, double yj)
-    {
-        return (xi - xj) * (xi - xj) + (yi - yj) * (yi - yj);
-    };
-
-    VectorXd T = VectorXd::Zero(control.size());
-    MatrixXd P = MatrixXd::Zero(control.size(), 3);
-    MatrixXd K = MatrixXd::Zero(control.size(), control.size());
-    
-    for (auto i = 0; i < control.size(); ++i)
-    {
-        PointId ii = control[i];
-        double xi = view->getFieldAs<double>(Id::X, ii);
-        double yi = view->getFieldAs<double>(Id::Y, ii);
-        double zi = view->getFieldAs<double>(Id::Z, ii);
-        T(i) = zi;
-        P.row(i) << 1, xi, yi;
-        
-        std::vector<PointId> neighbors = mymap[ii];
-        for (auto j = 0; j < neighbors.size(); ++j)
-        {
-            PointId jj = neighbors[j];
-            if (ii == jj)
-                continue;
-            double xj = view->getFieldAs<double>(Id::X, jj);
-            double yj = view->getFieldAs<double>(Id::Y, jj);
-            double rsqr = sqrDist(xi, xj, yi, yj);
-            K(i, j) = rsqr * std::log10(std::sqrt(rsqr));
-        }
-    }
-    
-    MatrixXd A = MatrixXd::Zero(control.size()+3, control.size()+3);
-    A.block(0,0,control.size(),control.size()) = K;
-    A.block(0,control.size(),control.size(),3) = P;
-    A.block(control.size(),0,3,control.size()) = P.transpose();
-
-    VectorXd b = VectorXd::Zero(control.size()+3);
-    b.head(control.size()) = T;
-
-    VectorXd x = A.colPivHouseholderQr().solve(b);
-
-    a = x.tail(3);
-    w = x.head(control.size());
-}
-
 std::vector<PointId> MongusFilter::interpolateSpline(PointViewPtr view,
         std::vector<PointId> samples,
         std::vector<PointId> control, std::map<PointId, std::vector<PointId> > mymap)
@@ -156,6 +104,8 @@ std::vector<PointId> MongusFilter::interpolateSpline(PointViewPtr view,
 
     std::vector<double> z(samples.size());
     std::vector<double> residuals(samples.size());
+    std::vector<double> nonzeros;
+    // nonzeros.reserve(samples.size());
     
     auto sqrDist = [](double xi, double xj, double yi, double yj)
     {
@@ -235,8 +185,23 @@ std::vector<PointId> MongusFilter::interpolateSpline(PointViewPtr view,
         z[k] = a(0) + a(1)*xk + a(2)*yk + sum;
         // log()->get(LogLevel::Debug) << "\t..." << z[k] << "\t" << zk - z[k] << std::endl;
         residuals[k] = zk - z[k];
+        if (residuals[k] > 0.0)
+            nonzeros.push_back(residuals[k]);
     }
     
+    // filter based on MAD first...
+    for (auto const& res : residuals)
+        log()->get(LogLevel::Debug) << res << std::endl;
+    std::sort(nonzeros.begin(), nonzeros.end());
+    log()->get(LogLevel::Debug) << nonzeros.size() << std::endl;
+    for (auto const& nz : nonzeros)
+        log()->get(LogLevel::Debug) << nz << std::endl;
+    if (nonzeros.size() % 2 == 0)
+        log()->get(LogLevel::Debug) << "Median is " << (nonzeros[nonzeros.size() / 2 - 1] + nonzeros[nonzeros.size() / 2]) / 2 << std::endl;
+    else
+        log()->get(LogLevel::Debug) << "Median is " << nonzeros[nonzeros.size() / 2] << std::endl;;
+    
+    // ...then mu and sigma
     int n = 1;
     double M1 = 0.0;
     double M2 = 0.0;
@@ -254,8 +219,8 @@ std::vector<PointId> MongusFilter::interpolateSpline(PointViewPtr view,
     }
     double mean = M1;
     double std = std::sqrt(M2 / (residuals.size()-1.0));
-    double t1 = M1 - 1*std;
-    double t2 = M1 + 1*std;
+    double t1 = M1 - 3*std;
+    double t2 = M1 + 3*std;
     log()->get(LogLevel::Debug) << mean << "\t" << std << "\t" << t1 << "\t" << t2 << std::endl;
     
     for (auto k = 0; k < samples.size(); ++k)
@@ -267,162 +232,6 @@ std::vector<PointId> MongusFilter::interpolateSpline(PointViewPtr view,
     return newcontrol;
 }
 
-Eigen::MatrixXd MongusFilter::TPS(Eigen::MatrixXd cx, Eigen::MatrixXd cy,
-                                  Eigen::MatrixXd cz, double cell_size)
-{
-    using namespace Eigen;
-
-    int num_rows = cz.rows();
-    int num_cols = cz.cols();
-    int max_row = m_bounds.miny + num_rows * cell_size;
-
-    MatrixXd S = MatrixXd::Zero(num_rows, num_cols);
-
-    for (auto outer_col = 0; outer_col < num_cols; ++outer_col)
-    {
-        for (auto outer_row = 0; outer_row < num_rows; ++outer_row)
-        {
-            // Further optimizations are achieved by estimating only the
-            // interpolated surface within a local neighbourhood (e.g. a 7 x 7
-            // neighbourhood is used in our case) of the cell being filtered.
-            int radius = 3;
-
-            int cs = clamp(outer_col-radius, 0, num_cols-1);
-            int ce = clamp(outer_col+radius, 0, num_cols-1);
-            int col_size = ce - cs + 1;
-            int rs = clamp(outer_row-radius, 0, num_rows-1);
-            int re = clamp(outer_row+radius, 0, num_rows-1);
-            int row_size = re - rs + 1;
-
-            MatrixXd Xn = cx.block(rs, cs, row_size, col_size);
-            MatrixXd Yn = cy.block(rs, cs, row_size, col_size);
-            MatrixXd Hn = cz.block(rs, cs, row_size, col_size);
-
-            int nsize = Hn.size();
-            VectorXd T = VectorXd::Zero(nsize);
-            MatrixXd P = MatrixXd::Zero(nsize, 3);
-            MatrixXd K = MatrixXd::Zero(nsize, nsize);
-
-            for (auto id = 0; id < Hn.size(); ++id)
-            {
-                double xj = Xn(id);
-                if (std::isnan(xj))
-                    continue;
-                double yj = Yn(id);
-                if (std::isnan(yj))
-                    continue;
-                double zj = Hn(id);
-                if (zj == std::numeric_limits<double>::max())
-                    continue;
-                T(id) = zj;
-                P.row(id) << 1, xj, yj;
-                for (auto id2 = 0; id2 < Hn.size(); ++id2)
-                {
-                    if (id == id2)
-                        continue;
-                    double xk = Xn(id2);
-                    if (std::isnan(xk))
-                        continue;
-                    double yk = Yn(id2);
-                    if (std::isnan(yk))
-                        continue;
-                    double rsqr = (xj - xk) * (xj - xk) + (yj - yk) * (yj - yk);
-                    if (rsqr == 0.0)
-                        continue;
-                    K(id, id2) = rsqr * std::log10(std::sqrt(rsqr));
-                }
-            }
-
-            MatrixXd A = MatrixXd::Zero(nsize+3, nsize+3);
-            A.block(0,0,nsize,nsize) = K;
-            A.block(0,nsize,nsize,3) = P;
-            A.block(nsize,0,3,nsize) = P.transpose();
-
-            VectorXd b = VectorXd::Zero(nsize+3);
-            b.head(nsize) = T;
-
-            VectorXd x = A.fullPivHouseholderQr().solve(b);
-
-            Vector3d a = x.tail(3);
-            VectorXd w = x.head(nsize);
-
-            double sum = 0.0;
-            double xi = m_bounds.minx + outer_col * cell_size + cell_size / 2;
-            double xi2 = cx(outer_row, outer_col);
-            double yi = max_row - (outer_row * cell_size + cell_size / 2);
-            double yi2 = cy(outer_row, outer_col);
-            double zi = cz(outer_row, outer_col);
-            if (zi == std::numeric_limits<double>::max())
-                continue;
-            for (auto j = 0; j < nsize; ++j)
-            {
-                double xj = Xn(j);
-                if (std::isnan(xj))
-                    continue;
-                double yj = Yn(j);
-                if (std::isnan(yj))
-                    continue;
-                double rsqr = (xj - xi2) * (xj - xi2) + (yj - yi2) * (yj - yi2);
-                if (rsqr == 0.0)
-                    continue;
-                sum += w(j) * rsqr * std::log10(std::sqrt(rsqr));
-            }
-
-            S(outer_row, outer_col) = a(0) + a(1)*xi + a(2)*yi + sum;
-
-            // std::cerr << std::fixed;
-            // std::cerr << std::setprecision(3)
-            //           << std::left
-            //           << "S(" << outer_row << "," << outer_col << "): "
-            //           << std::setw(10)
-            //           << S(outer_row, outer_col)
-            //           << std::setw(3)
-            //           << "\tz: "
-            //           << std::setw(10)
-            //           << zi
-            //           << std::setw(7)
-            //           << "\tzdiff: "
-            //           << std::setw(5)
-            //           << zi - S(outer_row, outer_col)
-            //           << std::setw(7)
-            //           << "\txdiff: "
-            //           << std::setw(5)
-            //           << xi2 - xi
-            //           << std::setw(7)
-            //           << "\tydiff: "
-            //           << std::setw(5)
-            //           << yi2 - yi
-            //           << std::setw(7)
-            //           << "\t# pts: "
-            //           << std::setw(3)
-            //           << nsize
-            //           << std::setw(5)
-            //           << "\tsum: "
-            //           << std::setw(10)
-            //           << sum
-            //           << std::setw(9)
-            //           << "\tw.sum(): "
-            //           << std::setw(5)
-            //           << w.sum()
-            //           << std::setw(6)
-            //           << "\txsum: "
-            //           << std::setw(5)
-            //           << w.dot(P.col(1))
-            //           << std::setw(6)
-            //           << "\tysum: "
-            //           << std::setw(5)
-            //           << w.dot(P.col(2))
-            //           << std::setw(3)
-            //           << "\ta: "
-            //           << std::setw(8)
-            //           << a.transpose()
-            //           << std::endl;
-        }
-    }
-
-    return S;
-}
-
 void MongusFilter::writeMatrix(Eigen::MatrixXd data, std::string filename, double cell_size, PointViewPtr view)
 {
     int cols = data.cols();
@@ -430,7 +239,7 @@ void MongusFilter::writeMatrix(Eigen::MatrixXd data, std::string filename, doubl
 
     GDALAllRegister();
 
-    GDALDataset *mpDstDS;
+    GDALDataset *mpDstDS = NULL;
 
     char **papszMetadata;
 
@@ -591,73 +400,14 @@ void MongusFilter::writeSurface(std::string filename, PointViewPtr view, std::ve
         KD2Index kd(*ctrl);
         kd.build();
         
-        // VectorXd T = VectorXd::Zero(control.size());
-        // MatrixXd P = MatrixXd::Zero(control.size(), 3);
-        // MatrixXd K = MatrixXd::Zero(control.size(), control.size());
-        // 
-        // for (auto i = 0; i < control.size(); ++i)
-        // {
-        //     PointId ii = control[i];
-        //     double xi = view->getFieldAs<double>(Id::X, ii);
-        //     double yi = view->getFieldAs<double>(Id::Y, ii);
-        //     double zi = view->getFieldAs<double>(Id::Z, ii);
-        //     T(i) = zi;
-        //     P.row(i) << 1, xi, yi;
-        //     for (auto j = 0; j < control.size(); ++j)
-        //     {
-        //         PointId jj = control[j];
-        //         if (ii == jj)
-        //             continue;
-        //         double xj = view->getFieldAs<double>(Id::X, jj);
-        //         double yj = view->getFieldAs<double>(Id::Y, jj);
-        //         double rsqr = sqrDist(xi, xj, yi, yj);
-        //         K(i, j) = rsqr * std::log10(std::sqrt(rsqr));
-        //     }
-        // }
-        // // log()->get(LogLevel::Debug) << "T: " << T.transpose() << std::endl;
-        // // log()->get(LogLevel::Debug) << "P: " << P.transpose() << std::endl;
-        // // log()->get(LogLevel::Debug) << "K: " << K << std::endl;
-        // 
-        // MatrixXd A = MatrixXd::Zero(control.size()+3, control.size()+3);
-        // A.block(0,0,control.size(),control.size()) = K;
-        // A.block(0,control.size(),control.size(),3) = P;
-        // A.block(control.size(),0,3,control.size()) = P.transpose();
-        // 
-        // VectorXd b = VectorXd::Zero(control.size()+3);
-        // b.head(control.size()) = T;
-        // 
-        // VectorXd x = A.fullPivHouseholderQr().solve(b);
-        // 
-        // Vector3d a = x.tail(3);
-        // VectorXd w = x.head(control.size());
-        
-        // ArrayXd xarr(control.size());
-        // ArrayXd yarr(control.size());
-        // for (auto j = 0; j < control.size(); ++j)
-        // {
-        //     PointId jj = control[j];
-        //     xarr(j) = view->getFieldAs<double>(Id::X, jj);
-        //     yarr(j) = view->getFieldAs<double>(Id::Y, jj);
-        // }
-        // 
-        // ArrayXd warr = w.array();
-        
         #pragma omp parallel for
         for (auto c = cs; c < ce; ++c)
         {
             double xk = m_bounds.minx + (c+0.5)*m_cellSize;
-            // ArrayXd xdiff = xk - xarr;
-            // log()->get(LogLevel::Debug) << "xd: " << xdiff << std::endl;
-            // ArrayXd xdiff2 = xdiff * xdiff;
                   
             for (auto r = rs; r < re; ++r)
             {
-              // std::cerr << warr.size() << std::endl;
-              // std::cerr << w.array().size() << std::endl;
-              // log()->get(LogLevel::Debug) << "w: " << warr << std::endl;
-              
                   double yk = m_maxRow - (r+0.5)*m_cellSize;
-                  // ArrayXd ydiff = yk - yarr;
                   
                   std::vector<PointId> nearest = kd.neighbors(xk, yk, 1);
                   
@@ -700,21 +450,6 @@ void MongusFilter::writeSurface(std::string filename, PointViewPtr view, std::ve
 
                   Vector3d a = x.tail(3);
                   VectorXd w = x.head(neighbors.size());
-                  
-                  // log()->get(LogLevel::Debug) << "yk: " << yk << std::endl;
-                  // log()->get(LogLevel::Debug) << "yarr: " << yarr << std::endl;
-                  // log()->get(LogLevel::Debug) << "yd: " << ydiff << std::endl;
-                  // ArrayXd ydiff2 = ydiff * ydiff;
-                  // ArrayXd rsqr = xdiff2 + ydiff2;
-                  // ArrayXd parts = w.array() * rsqr * rsqr.sqrt().log();
-                  // double sum = parts.sum();
-                  
-                  // log()->get(LogLevel::Debug) << "rsqr: " << rsqr << std::endl;
-                  // log()->get(LogLevel::Debug) << "logrsqr: " << rsqr.sqrt().log() << std::endl;
-                  // log()->get(LogLevel::Debug) << "rsqrtlogrsqr: " << rsqr*rsqr.sqrt().log() << std::endl;
-                  // log()->get(LogLevel::Debug) << "parts: " << parts << std::endl;
-                  // log()->get(LogLevel::Debug) << "sum: " <<  sum << std::endl;
-                  
                   
                   double sum = 0.0;
                   for (auto j = 0; j < neighbors.size(); ++j)
@@ -809,12 +544,6 @@ std::vector<PointId> MongusFilter::processGround(PointViewPtr view)
     m_maxRow = m_bounds.miny + m_numRows * m_cellSize;
 
     // create control points matrix at default cell size
-    // MatrixXd cx(m_numRows, m_numCols);
-    // cx.setConstant(std::numeric_limits<double>::quiet_NaN());
-    // 
-    // MatrixXd cy(m_numRows, m_numCols);
-    // cy.setConstant(std::numeric_limits<double>::quiet_NaN());
-    
     MatrixXi ci(m_numRows, m_numCols);
     ci.setConstant(std::numeric_limits<int>::quiet_NaN());
 
@@ -868,7 +597,6 @@ std::vector<PointId> MongusFilter::processGround(PointViewPtr view)
 
     // Top-level control samples are assumed to be ground points, no filtering
     // is applied.
-    // std::vector<PointId> control = downsampleMin(ci, cz, level);
     std::map<PointId, std::vector<PointId> > h0 = h[m_l];
     std::cerr << h0.size() << " control at level 0\n";
     std::vector<PointId> control(h0.size());
@@ -889,7 +617,6 @@ std::vector<PointId> MongusFilter::processGround(PointViewPtr view)
 
         // downsample control at level
         cur_cell_size /= 2;
-        // std::vector<PointId> samples = downsampleMin(ci, cz, l);
         std::map<PointId, std::vector<PointId> > hl = h[l];
         std::vector<PointId> samples(hl.size());
         int i = 0;
@@ -901,13 +628,7 @@ std::vector<PointId> MongusFilter::processGround(PointViewPtr view)
         
         // The interpolated surface is estimated based on the filtered set of
         // TPS control-points at the previous level of hierarchy
-        // MatrixXd surface = TPS(dcx, dcy, dcz, cur_cell_size);
-        // Vector3d a = Vector3d::Zero();
-        // VectorXd w = VectorXd::Zero(control.size());
-        // computeSpline(view, control, a, w, h[l]);
         std::vector<PointId> newcontrol = interpolateSpline(view, samples, control, h[l]);
-        // std::cerr << a.transpose() << std::endl;
-        // std::cerr << w.transpose() << std::endl;
         log()->get(LogLevel::Debug) << newcontrol.size() << " samples are kept for the next iteration\n";
         
         control.swap(newcontrol);
@@ -915,10 +636,7 @@ std::vector<PointId> MongusFilter::processGround(PointViewPtr view)
         char buf[256];
         sprintf(buf, "surf_%d.tif", l);
         std::string name(buf);
-        // Vector3d newa = Vector3d::Zero();
-        // VectorXd neww = VectorXd::Zero(control.size());
-        // computeSpline(view, control, newa, neww, h[l]);
-        // writeSurface(name, view, control, h[l]);
+        writeSurface(name, view, control, h[l]);
         
         // MatrixXd R = computeResidual(dcz, surface);
         // MatrixXd maxZ = matrixOpen(R, 2*l);
@@ -1092,7 +810,7 @@ std::map<int, std::map<PointId, std::vector<PointId> > > MongusFilter::buildLeve
             localCi.conservativeResize(std::ceil(cz.rows()/step),std::ceil(cz.cols()/step));
         }
         
-        int radius = 5;
+        int radius = 3;
         std::map<PointId, std::vector<PointId> > mymap;
         for (auto c = 0; c < localCi.cols(); ++c)
         {
@@ -1120,40 +838,6 @@ std::map<int, std::map<PointId, std::vector<PointId> > > MongusFilter::buildLeve
     }
     
     return hierarchy;
-}
-
-std::vector<PointId> MongusFilter::downsampleMin(Eigen::MatrixXi ci,
-                                 Eigen::MatrixXd cz,
-                                 int level)
-{
-    using namespace Eigen;
-    
-    assert(ci.rows() == cz.rows());
-    assert(ci.cols() == cz.cols());
-    
-    int step = std::pow(2, level);
-    log()->get(LogLevel::Debug) << "Downsampling at level " << level
-                                << " with step size of " << step << std::endl;
-    std::vector<PointId> ids;
-
-    for (auto c = 0; c < cz.cols(); c+=step)
-    {
-        for (auto r = 0; r < cz.rows(); r+=step)
-        {
-            int re = clamp(r+step, 0, cz.rows());
-            int ce = clamp(c+step, 0, cz.cols());
-            int rsize = re - r;
-            int csize = ce - c;
-            // log()->get(LogLevel::Debug) << "row: " << r << "\t" << re << "\t" << rsize << std::endl;
-            // log()->get(LogLevel::Debug) << "col: " << c << "\t" << ce << "\t" << csize << std::endl;
-            MatrixXd::Index minRow, minCol;
-            cz.block(r, c, rsize, csize).minCoeff(&minRow, &minCol);
-            ids.push_back(ci.block(r, c, rsize, csize)(minRow, minCol));
-            // log()->get(LogLevel::Debug) << cz.block(r, c, rsize, csize)(minRow, minCol) << "\t" << ci.block(r, c, rsize, csize)(minRow, minCol) << std::endl;
-        }
-    }
-    
-    return ids;
 }
 
 Eigen::MatrixXd MongusFilter::computeResidual(Eigen::MatrixXd cz,
