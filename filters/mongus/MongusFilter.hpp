@@ -95,8 +95,9 @@ private:
                        int level);
     std::vector<PointId> processGround(PointViewPtr view);
     virtual PointViewSet run(PointViewPtr view);
-    std::vector<PointId> spline(PointViewPtr view, std::vector<PointId> samples,
-                               std::vector<PointId> control, Eigen::Ref<Eigen::Vector3d> a, Eigen::Ref<Eigen::VectorXd> w);
+    std::vector<PointId> interpolateSpline(PointViewPtr view, std::vector<PointId> samples,
+                               std::vector<PointId> control, Eigen::Vector3d a, Eigen::VectorXd w);
+   void computeSpline(PointViewPtr view, std::vector<PointId> control, Eigen::Ref<Eigen::Vector3d> a, Eigen::Ref<Eigen::VectorXd> w);
    void writeSurface(std::string filename, PointViewPtr view, std::vector<PointId> control, Eigen::Vector3d a, Eigen::VectorXd w);
 
     MongusFilter& operator=(const MongusFilter&); // not implemented

@@ -91,19 +91,12 @@ int MongusFilter::getRowIndex(double y, double cell_size)
     return static_cast<int>(floor((m_maxRow - y) / cell_size));
 }
 
-std::vector<PointId> MongusFilter::spline(PointViewPtr view,
-        std::vector<PointId> samples,
-        std::vector<PointId> control, Eigen::Ref<Eigen::Vector3d> a, Eigen::Ref<Eigen::VectorXd> w)
+void MongusFilter::computeSpline(PointViewPtr view, std::vector<PointId> control, Eigen::Ref<Eigen::Vector3d> a, Eigen::Ref<Eigen::VectorXd> w)
 {
     using namespace Dimension;
     using namespace Eigen;
-
-    // for each sx, sy sample location, compute the interpolate the value Z from spline control points cx, cy, cz
     
-    std::vector<PointId> newcontrol;
-
-    std::vector<double> z(samples.size());
-    std::vector<double> residuals(samples.size());
+    log()->get(LogLevel::Debug) << "Computing spline for " << control.size() << " samples\n";
     
     auto sqrDist = [](double xi, double xj, double yi, double yj)
     {
@@ -133,9 +126,6 @@ std::vector<PointId> MongusFilter::spline(PointViewPtr view,
             K(i, j) = rsqr * std::log10(std::sqrt(rsqr));
         }
     }
-    // log()->get(LogLevel::Debug) << "T: " << T.transpose() << std::endl;
-    // log()->get(LogLevel::Debug) << "P: " << P.transpose() << std::endl;
-    // log()->get(LogLevel::Debug) << "K: " << K << std::endl;
     
     MatrixXd A = MatrixXd::Zero(control.size()+3, control.size()+3);
     A.block(0,0,control.size(),control.size()) = K;
@@ -145,13 +135,30 @@ std::vector<PointId> MongusFilter::spline(PointViewPtr view,
     VectorXd b = VectorXd::Zero(control.size()+3);
     b.head(control.size()) = T;
 
-    VectorXd x = A.fullPivHouseholderQr().solve(b);
+    VectorXd x = A.colPivHouseholderQr().solve(b);
 
-    /*Vector3d*/ a = x.tail(3);
-    /*VectorXd*/ w = x.head(control.size());
+    a = x.tail(3);
+    w = x.head(control.size());
+}
+
+std::vector<PointId> MongusFilter::interpolateSpline(PointViewPtr view,
+        std::vector<PointId> samples,
+        std::vector<PointId> control, Eigen::Vector3d a, Eigen::VectorXd w)
+{
+    using namespace Dimension;
+    using namespace Eigen;
+
+    // for each sx, sy sample location, compute the interpolate the value Z from spline control points cx, cy, cz
     
-    // log()->get(LogLevel::Debug) << "a: " << a.transpose() << std::endl;
-    // log()->get(LogLevel::Debug) << "w: " << w.transpose() << std::endl;
+    std::vector<PointId> newcontrol;
+
+    std::vector<double> z(samples.size());
+    std::vector<double> residuals(samples.size());
+    
+    auto sqrDist = [](double xi, double xj, double yi, double yj)
+    {
+        return (xi - xj) * (xi - xj) + (yi - yj) * (yi - yj);
+    };
 
     for (auto k = 0; k < samples.size(); ++k)
     {
@@ -466,8 +473,8 @@ void MongusFilter::writeMatrix(Eigen::MatrixXd data, std::string filename, doubl
 
 void MongusFilter::writeSurface(std::string filename, PointViewPtr view, std::vector<PointId> control, Eigen::Vector3d a, Eigen::VectorXd w)
 {
-  std::cerr << w.transpose() << std::endl;
-  std::cerr << w.size() << std::endl;
+  // std::cerr << w.transpose() << std::endl;
+  // std::cerr << w.size() << std::endl;
     int cols = m_numCols/2;
     int rows = m_numRows/2;
 
@@ -601,9 +608,9 @@ void MongusFilter::writeSurface(std::string filename, PointViewPtr view, std::ve
                   
             for (auto r = rs; r < re; ++r)
             {
-              std::cerr << warr.size() << std::endl;
+              // std::cerr << warr.size() << std::endl;
               // std::cerr << w.array().size() << std::endl;
-              log()->get(LogLevel::Debug) << "w: " << warr << std::endl;
+              // log()->get(LogLevel::Debug) << "w: " << warr << std::endl;
               
                   double yk = m_maxRow - (r+0.5)*2*m_cellSize;
                   ArrayXd ydiff = yk - yarr;
@@ -792,9 +799,10 @@ std::vector<PointId> MongusFilter::processGround(PointViewPtr view)
         // MatrixXd surface = TPS(dcx, dcy, dcz, cur_cell_size);
         Vector3d a = Vector3d::Zero();
         VectorXd w = VectorXd::Zero(control.size());
-        std::vector<PointId> newcontrol = spline(view, samples, control, a, w);
-        std::cerr << a.transpose() << std::endl;
-        std::cerr << w.transpose() << std::endl;
+        computeSpline(view, control, a, w);
+        std::vector<PointId> newcontrol = interpolateSpline(view, samples, control, a, w);
+        // std::cerr << a.transpose() << std::endl;
+        // std::cerr << w.transpose() << std::endl;
         log()->get(LogLevel::Debug) << newcontrol.size() << " samples are kept for the next iteration\n";
         
         control.swap(newcontrol);
@@ -802,7 +810,10 @@ std::vector<PointId> MongusFilter::processGround(PointViewPtr view)
         char buf[256];
         sprintf(buf, "surf_%d.tif", l);
         std::string name(buf);
-        writeSurface(name, view, control, a, w);
+        Vector3d newa = Vector3d::Zero();
+        VectorXd neww = VectorXd::Zero(control.size());
+        computeSpline(view, control, newa, neww);
+        writeSurface(name, view, control, newa, neww);
         
         // MatrixXd R = computeResidual(dcz, surface);
         // MatrixXd maxZ = matrixOpen(R, 2*l);
