@@ -88,19 +88,18 @@ int MongusFilter::getRowIndex(double y, double cell_size)
     return static_cast<int>(floor((m_maxRow - y) / cell_size));
 }
 
-Eigen::MatrixXd MongusFilter::computeSplineResiduals(Eigen::MatrixXd x_prev,
+Eigen::MatrixXd MongusFilter::computeSpline(Eigen::MatrixXd x_prev,
         Eigen::MatrixXd y_prev,
         Eigen::MatrixXd z_prev,
         Eigen::MatrixXd x_samp,
-        Eigen::MatrixXd y_samp,
-        Eigen::MatrixXd z_samp,
-        double cell_size)
+        Eigen::MatrixXd y_samp)
 {
     using namespace Eigen;
 
-    int num_rows = z_samp.rows();
-    int num_cols = z_samp.cols();
-    int max_row = m_bounds.miny + num_rows * cell_size;
+// maybe make sure that all prevs are the same size, same with samps
+
+    int num_rows = x_samp.rows();
+    int num_cols = x_samp.cols();
 
     MatrixXd S = MatrixXd::Zero(num_rows, num_cols);
 
@@ -418,7 +417,7 @@ std::vector<PointId> MongusFilter::processGround(PointViewPtr view)
         downsampleMin(&cx, &cy, &cz, &x_samp, &y_samp, &z_samp, cur_cell_size);
         // 4x4, 8x8, 16x16, 32x32, 64x64, 128x128, 256x256
 
-        MatrixXd surface = computeSplineResiduals(x_prev, y_prev, z_prev, x_samp, y_samp, z_samp, cur_cell_size);
+        MatrixXd surface = computeSpline(x_prev, y_prev, z_prev, x_samp, y_samp);
 
         // if (l == 3)
         // {
@@ -507,13 +506,14 @@ std::vector<PointId> MongusFilter::processGround(PointViewPtr view)
                                     << "; sum=" << M.sum()
                                     << "; size=" << M.size() << std::endl;
 
+        double madthresh = 2.0;
         // Just computing the percent outlier FYI.
-        double perc = static_cast<double>((M.array() > 2).count());
+        double perc = static_cast<double>((M.array() > madthresh).count());
         perc /= static_cast<double>(R.size());
         perc *= 100.0;
         log()->get(LogLevel::Debug) << "median=" << m
                                     << "; MAD=" << mad
-                                    << "; " << (M.array() > 2).count()
+                                    << "; " << (M.array() > madthresh).count()
                                     << " outliers out of " << R.size()
                                     << " control points (" << perc << "%)\n";
 
@@ -523,8 +523,9 @@ std::vector<PointId> MongusFilter::processGround(PointViewPtr view)
         // iteration.
         for (auto i = 0; i < M.size(); ++i)
         {
-            if (M(i) > 2)
-                z_samp(i) = surface(i);
+            if (M(i) > madthresh)
+                z_samp(i) = std::numeric_limits<double>::quiet_NaN();
+                // z_samp(i) = surface(i);
         }
 
         if (log()->getLevel() > LogLevel::Debug5)
@@ -569,7 +570,7 @@ std::vector<PointId> MongusFilter::processGround(PointViewPtr view)
         z_prev = z_samp;
     }
 
-    MatrixXd surface = computeSplineResiduals(x_prev, y_prev, z_prev, cx, cy, cz, m_cellSize);
+    MatrixXd surface = computeSpline(x_prev, y_prev, z_prev, cx, cy);
 
     if (log()->getLevel() > LogLevel::Debug5)
     {

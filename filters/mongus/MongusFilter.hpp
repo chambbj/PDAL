@@ -81,13 +81,11 @@ private:
     int getRowIndex(double y, double cell_size);
     void writeMatrix(Eigen::MatrixXd data, std::string filename,
                      double cell_size, PointViewPtr view);
-    Eigen::MatrixXd computeSplineResiduals(Eigen::MatrixXd x_prev, 
-                                           Eigen::MatrixXd y_prev,
-                                           Eigen::MatrixXd z_prev,
-                                           Eigen::MatrixXd x_samp,
-                                           Eigen::MatrixXd y_samp,
-                                           Eigen::MatrixXd z_samp,
-                                           double cell_size);
+    Eigen::MatrixXd computeSpline(Eigen::MatrixXd x_prev, 
+                                  Eigen::MatrixXd y_prev,
+                                  Eigen::MatrixXd z_prev,
+                                  Eigen::MatrixXd x_samp,
+                                  Eigen::MatrixXd y_samp);
     void writeControl(Eigen::MatrixXd cx, Eigen::MatrixXd cy, Eigen::MatrixXd cz, std::string filename);
     Eigen::MatrixXd padMatrix(Eigen::MatrixXd data, int radius);
     Eigen::MatrixXd matrixOpen(Eigen::MatrixXd data, int radius);
