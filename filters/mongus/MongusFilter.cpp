@@ -45,8 +45,6 @@
 #include "gdal_version.h" // For version info
 #include "ogr_spatialref.h"  //For Geographic Information/Transformations
 
-#include <unordered_map>
-
 namespace pdal
 {
 
@@ -422,50 +420,91 @@ std::vector<PointId> MongusFilter::processGround(PointViewPtr view)
         
         MatrixXd surface = computeSplineResiduals(x_prev, y_prev, z_prev, x_samp, y_samp, z_samp, cur_cell_size);
         
-        if (l == 3)
-        {
-            log()->get(LogLevel::Debug) << cx.rows() << "\t" << cx.cols() << std::endl;
-            log()->get(LogLevel::Debug) << x_prev.rows() << "\t" << x_prev.cols() << std::endl;
-            log()->get(LogLevel::Debug) << x_samp.rows() << "\t" << x_samp.cols() << std::endl;
-            log()->get(LogLevel::Debug) << surface.rows() << "\t" << surface.cols() << std::endl;
-            log()->get(LogLevel::Debug) << "x: " << cx.row(1) << std::endl;
-            log()->get(LogLevel::Debug) << "z: " << cz.row(1) << std::endl;
-            log()->get(LogLevel::Debug) << "control_x: " << x_prev.row(0) << std::endl;
-            log()->get(LogLevel::Debug) << "control_z: " << z_prev.row(0) << std::endl;
-            log()->get(LogLevel::Debug) << "samples_x: " << x_samp.row(0) << std::endl;
-            log()->get(LogLevel::Debug) << "samples_z: " << z_samp.row(0) << std::endl;
-            log()->get(LogLevel::Debug) << "spline: " << surface.row(0) << std::endl;
-        }
+        // if (l == 3)
+        // {
+        //     log()->get(LogLevel::Debug) << cx.rows() << "\t" << cx.cols() << std::endl;
+        //     log()->get(LogLevel::Debug) << x_prev.rows() << "\t" << x_prev.cols() << std::endl;
+        //     log()->get(LogLevel::Debug) << x_samp.rows() << "\t" << x_samp.cols() << std::endl;
+        //     log()->get(LogLevel::Debug) << surface.rows() << "\t" << surface.cols() << std::endl;
+        //     log()->get(LogLevel::Debug) << "x: " << cx.row(1) << std::endl;
+        //     log()->get(LogLevel::Debug) << "z: " << cz.row(1) << std::endl;
+        //     log()->get(LogLevel::Debug) << "control_x: " << x_prev.row(0) << std::endl;
+        //     log()->get(LogLevel::Debug) << "control_z: " << z_prev.row(0) << std::endl;
+        //     log()->get(LogLevel::Debug) << "samples_x: " << x_samp.row(0) << std::endl;
+        //     log()->get(LogLevel::Debug) << "samples_z: " << z_samp.row(0) << std::endl;
+        //     log()->get(LogLevel::Debug) << "spline: " << surface.row(0) << std::endl;
+        // }
         
         char bufs[256];
-        sprintf(bufs, "spline_%d.laz", l);
+        sprintf(bufs, "cur_control_%d.laz", l);
         std::string names(bufs);
         writeControl(x_samp, y_samp, z_samp, names);
 
         MatrixXd R = z_samp - surface;
         
-        auto median = [](std::vector<double> vals)
+        if (l == 7)
+            log()->get(LogLevel::Debug) << R << std::endl;
+        
+        log()->get(LogLevel::Debug) << "R: max=" << R.maxCoeff()
+                                    << "; min=" << R.minCoeff()
+                                    << "; sum=" << R.sum()
+                                    << "; size=" << R.size() << std::endl;
+      
+        // median takes an unsorted vector, possibly containing NANs, and
+        // returns the median value.
+        auto median = [&](std::vector<double> vals)
         {
-            // this only works for even number of values, but for matrices, this
-            // is a safe assumption anyway
-            std::sort(vals.begin(), vals.end());
-            return (vals[vals.size()/2+1]+vals[vals.size()/2])/2;
+            // Begin by partitioning the vector by isnan.
+            auto ptr = std::partition(vals.begin(), vals.end(), [](double p){ return std::isnan(p); });
+            
+            // Copy the actual values, thus eliminating NANs, and sort it.
+            std::vector<double> cp(ptr, vals.end());
+            std::sort(cp.begin(), cp.end());
+            
+            std::cerr << "median troubleshooting\n";
+            std::cerr << vals.size() << "\t" << cp.size() << std::endl;
+            std::cerr << cp.size() % 2 << std::endl;
+            std::cerr << cp[cp.size()/2-1] << "\t" << cp[cp.size()/2] << std::endl;
+            if (l == 7)
+            {
+                for (auto const& v : cp)
+                    std::cerr << v << ", ";
+                std::cerr << std::endl;
+            }
+            
+            // Compute the median value. For even sized vectors, this is the
+            // average of the midpoints, otherwise it is the midpoint.
+            double median = 0.0;
+            if (cp.size() % 2 == 0)
+                median = (cp[cp.size()/2-1]+cp[cp.size()/2])/2;
+            else
+                median = cp[cp.size()/2];
+                
+            return median;
         };
         
-        // compute median of residuals
+        // Compute median of residuals.
         std::vector<double> allres(R.data(), R.data()+R.size());
         double m = median(allres);
         
-        // compute absolute difference from median
+        // Compute absolute difference of the residuals from the median.
         ArrayXd ad = (R.array()-m).abs();
-        std::vector<double> absdiff(ad.data(), ad.data()+ad.size());
         
-        // compute median of absolute differences
+        // Compute median of absolute differences, with scale factor (1.4862)
+        // for a normal distribution.
+        std::vector<double> absdiff(ad.data(), ad.data()+ad.size());
         double mad = 1.4862 * median(absdiff);
       
-        // divice absolute differences by MAD to find outliers
+        // Divide absolute differences by MAD. Values greater than 2 are
+        // considered outliers.
         MatrixXd M = (ad / mad).matrix();
         
+        log()->get(LogLevel::Debug) << "M: max=" << M.maxCoeff()
+                                    << "; min=" << M.minCoeff()
+                                    << "; sum=" << M.sum()
+                                    << "; size=" << M.size() << std::endl;
+        
+        // Just computing the percent outlier FYI.
         double perc = static_cast<double>((M.array() > 2).count());
         perc /= static_cast<double>(R.size());
         perc *= 100.0;
@@ -479,21 +518,19 @@ std::vector<PointId> MongusFilter::processGround(PointViewPtr view)
         // replaced by the interpolated point. The time complexity of the
         // approach is reduced by filtering only the control-points in each
         // iteration.
-        for (auto c = 0; c < M.cols(); ++c)
+        for (auto i = 0; i < M.size(); ++i)
         {
-            for (auto r = 0; r < M.rows(); ++r)
-            {
-                if (M(r,c) > 2)
-                    z_samp(r, c) = surface(r, c);
-            }
+            if (M(i) > 2)
+                z_samp(i) = surface(i);
         }
 
         if (log()->getLevel() > LogLevel::Debug5)
         {
             char buffer[256];
-            sprintf(buffer, "surface_%d.tif", l);
+            sprintf(buffer, "interp_surface_%d.laz", l);
             std::string name(buffer);
-            writeMatrix(surface, name, cur_cell_size, view);
+            // writeMatrix(surface, name, cur_cell_size, view);
+            writeControl(x_samp, y_samp, surface, name);
 
             char bufm[256];
             sprintf(bufm, "master_control_%d.laz", l);
@@ -502,22 +539,24 @@ std::vector<PointId> MongusFilter::processGround(PointViewPtr view)
 
             // this is identical to filtered control when written here - should move it...
             char buf3[256];
-            sprintf(buf3, "control_%d.laz", l);
+            sprintf(buf3, "prev_control_%d.laz", l);
             std::string name3(buf3);
             writeControl(x_prev, y_prev, z_prev, name3);
 
             char rbuf[256];
-            sprintf(rbuf, "residual_%d.tif", l);
+            sprintf(rbuf, "residual_%d.laz", l);
             std::string rbufn(rbuf);
-            writeMatrix(R, rbufn, cur_cell_size, view);
+            // writeMatrix(R, rbufn, cur_cell_size, view);
+            writeControl(x_samp, y_samp, R, rbufn);
             
             char mbuf[256];
-            sprintf(mbuf, "median_%d.tif", l);
+            sprintf(mbuf, "median_%d.laz", l);
             std::string mbufn(mbuf);
-            writeMatrix(M, mbufn, cur_cell_size, view);
+            // writeMatrix(M, mbufn, cur_cell_size, view);
+            writeControl(x_samp, y_samp, M, mbufn);
 
             char buf2[256];
-            sprintf(buf2, "filtered_control_%d.laz", l);
+            sprintf(buf2, "adjusted_control_%d.laz", l);
             std::string name2(buf2);
             writeControl(x_samp, y_samp, z_samp, name2);
         }
