@@ -89,12 +89,12 @@ int MongusFilter::getRowIndex(double y, double cell_size)
 }
 
 Eigen::MatrixXd MongusFilter::computeSplineResiduals(Eigen::MatrixXd x_prev,
-                                                     Eigen::MatrixXd y_prev,
-                                                     Eigen::MatrixXd z_prev,
-                                                     Eigen::MatrixXd x_samp,
-                                                     Eigen::MatrixXd y_samp,
-                                                     Eigen::MatrixXd z_samp,
-                                                     double cell_size)
+        Eigen::MatrixXd y_prev,
+        Eigen::MatrixXd z_prev,
+        Eigen::MatrixXd x_samp,
+        Eigen::MatrixXd y_samp,
+        Eigen::MatrixXd z_samp,
+        double cell_size)
 {
     using namespace Eigen;
 
@@ -112,7 +112,7 @@ Eigen::MatrixXd MongusFilter::computeSplineResiduals(Eigen::MatrixXd x_prev,
             // interpolated surface within a local neighbourhood (e.g. a 7 x 7
             // neighbourhood is used in our case) of the cell being filtered.
             int radius = 3;
-            
+
             int inner_col = std::floor(outer_col/2);
             int inner_row = std::floor(outer_row/2);
 
@@ -363,7 +363,7 @@ std::vector<PointId> MongusFilter::processGround(PointViewPtr view)
             cz(r, c) = z;
         }
     }
-    
+
     writeControl(cx, cy, cz, "grid_mins.laz");
 
     // In our case, 2D structural elements of circular shape are employed and
@@ -417,9 +417,9 @@ std::vector<PointId> MongusFilter::processGround(PointViewPtr view)
         MatrixXd x_samp, y_samp, z_samp;
         downsampleMin(&cx, &cy, &cz, &x_samp, &y_samp, &z_samp, cur_cell_size);
         // 4x4, 8x8, 16x16, 32x32, 64x64, 128x128, 256x256
-        
+
         MatrixXd surface = computeSplineResiduals(x_prev, y_prev, z_prev, x_samp, y_samp, z_samp, cur_cell_size);
-        
+
         // if (l == 3)
         // {
         //     log()->get(LogLevel::Debug) << cx.rows() << "\t" << cx.cols() << std::endl;
@@ -434,33 +434,36 @@ std::vector<PointId> MongusFilter::processGround(PointViewPtr view)
         //     log()->get(LogLevel::Debug) << "samples_z: " << z_samp.row(0) << std::endl;
         //     log()->get(LogLevel::Debug) << "spline: " << surface.row(0) << std::endl;
         // }
-        
+
         char bufs[256];
         sprintf(bufs, "cur_control_%d.laz", l);
         std::string names(bufs);
         writeControl(x_samp, y_samp, z_samp, names);
 
         MatrixXd R = z_samp - surface;
-        
+
         if (l == 7)
             log()->get(LogLevel::Debug) << R << std::endl;
-        
+
         log()->get(LogLevel::Debug) << "R: max=" << R.maxCoeff()
                                     << "; min=" << R.minCoeff()
                                     << "; sum=" << R.sum()
                                     << "; size=" << R.size() << std::endl;
-      
+
         // median takes an unsorted vector, possibly containing NANs, and
         // returns the median value.
         auto median = [&](std::vector<double> vals)
         {
             // Begin by partitioning the vector by isnan.
-            auto ptr = std::partition(vals.begin(), vals.end(), [](double p){ return std::isnan(p); });
-            
+            auto ptr = std::partition(vals.begin(), vals.end(), [](double p)
+            {
+                return std::isnan(p);
+            });
+
             // Copy the actual values, thus eliminating NANs, and sort it.
             std::vector<double> cp(ptr, vals.end());
             std::sort(cp.begin(), cp.end());
-            
+
             std::cerr << "median troubleshooting\n";
             std::cerr << vals.size() << "\t" << cp.size() << std::endl;
             std::cerr << cp.size() % 2 << std::endl;
@@ -471,7 +474,7 @@ std::vector<PointId> MongusFilter::processGround(PointViewPtr view)
                     std::cerr << v << ", ";
                 std::cerr << std::endl;
             }
-            
+
             // Compute the median value. For even sized vectors, this is the
             // average of the midpoints, otherwise it is the midpoint.
             double median = 0.0;
@@ -479,31 +482,31 @@ std::vector<PointId> MongusFilter::processGround(PointViewPtr view)
                 median = (cp[cp.size()/2-1]+cp[cp.size()/2])/2;
             else
                 median = cp[cp.size()/2];
-                
+
             return median;
         };
-        
+
         // Compute median of residuals.
         std::vector<double> allres(R.data(), R.data()+R.size());
         double m = median(allres);
-        
+
         // Compute absolute difference of the residuals from the median.
         ArrayXd ad = (R.array()-m).abs();
-        
+
         // Compute median of absolute differences, with scale factor (1.4862)
         // for a normal distribution.
         std::vector<double> absdiff(ad.data(), ad.data()+ad.size());
         double mad = 1.4862 * median(absdiff);
-      
+
         // Divide absolute differences by MAD. Values greater than 2 are
         // considered outliers.
         MatrixXd M = (ad / mad).matrix();
-        
+
         log()->get(LogLevel::Debug) << "M: max=" << M.maxCoeff()
                                     << "; min=" << M.minCoeff()
                                     << "; sum=" << M.sum()
                                     << "; size=" << M.size() << std::endl;
-        
+
         // Just computing the percent outlier FYI.
         double perc = static_cast<double>((M.array() > 2).count());
         perc /= static_cast<double>(R.size());
@@ -548,7 +551,7 @@ std::vector<PointId> MongusFilter::processGround(PointViewPtr view)
             std::string rbufn(rbuf);
             // writeMatrix(R, rbufn, cur_cell_size, view);
             writeControl(x_samp, y_samp, R, rbufn);
-            
+
             char mbuf[256];
             sprintf(mbuf, "median_%d.laz", l);
             std::string mbufn(mbuf);
@@ -560,42 +563,42 @@ std::vector<PointId> MongusFilter::processGround(PointViewPtr view)
             std::string name2(buf2);
             writeControl(x_samp, y_samp, z_samp, name2);
         }
-        
+
         x_prev = x_samp;
         y_prev = y_samp;
         z_prev = z_samp;
     }
-        
+
     MatrixXd surface = computeSplineResiduals(x_prev, y_prev, z_prev, cx, cy, cz, m_cellSize);
-        
+
     if (log()->getLevel() > LogLevel::Debug5)
     {
-    //     writeControl(cx, cy, mc, "closed.laz");
-    // 
+        //     writeControl(cx, cy, mc, "closed.laz");
+        //
         char buffer[256];
         sprintf(buffer, "final_surface.tif");
         std::string name(buffer);
         writeMatrix(surface, name, m_cellSize, view);
-    // 
-    //     char rbuf[256];
-    //     sprintf(rbuf, "final_residual.tif");
-    //     std::string rbufn(rbuf);
-    //     writeMatrix(R, rbufn, cur_cell_size, view);
-    // 
-    //     char obuf[256];
-    //     sprintf(obuf, "final_opened.tif");
-    //     std::string obufn(obuf);
-    //     writeMatrix(maxZ, obufn, cur_cell_size, view);
-    // 
-    //     char Tbuf[256];
-    //     sprintf(Tbuf, "final_tophat.tif");
-    //     std::string Tbufn(Tbuf);
-    //     writeMatrix(T, Tbufn, cur_cell_size, view);
-    // 
-    //     char tbuf[256];
-    //     sprintf(tbuf, "final_thresh.tif");
-    //     std::string tbufn(tbuf);
-    //     writeMatrix(t, tbufn, cur_cell_size, view);
+        //
+        //     char rbuf[256];
+        //     sprintf(rbuf, "final_residual.tif");
+        //     std::string rbufn(rbuf);
+        //     writeMatrix(R, rbufn, cur_cell_size, view);
+        //
+        //     char obuf[256];
+        //     sprintf(obuf, "final_opened.tif");
+        //     std::string obufn(obuf);
+        //     writeMatrix(maxZ, obufn, cur_cell_size, view);
+        //
+        //     char Tbuf[256];
+        //     sprintf(Tbuf, "final_tophat.tif");
+        //     std::string Tbufn(Tbuf);
+        //     writeMatrix(T, Tbufn, cur_cell_size, view);
+        //
+        //     char tbuf[256];
+        //     sprintf(tbuf, "final_thresh.tif");
+        //     std::string tbufn(tbuf);
+        //     writeMatrix(t, tbufn, cur_cell_size, view);
     }
 
     // apply final filtering (top hat) using raw points against TPS
@@ -604,7 +607,7 @@ std::vector<PointId> MongusFilter::processGround(PointViewPtr view)
     for (auto i = 0; i < np; ++i)
     {
         using namespace Dimension;
-        
+
         double x = view->getFieldAs<double>(Id::X, i);
         double y = view->getFieldAs<double>(Id::Y, i);
         double z = view->getFieldAs<double>(Id::Z, i);
