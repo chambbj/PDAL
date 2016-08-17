@@ -79,17 +79,19 @@ private:
     int clamp(int t, int min, int max);
     int getColIndex(double x, double cell_size);
     int getRowIndex(double y, double cell_size);
-    Eigen::MatrixXd TPS(Eigen::MatrixXd cx, Eigen::MatrixXd cy,
-                        Eigen::MatrixXd cz, double cell_size);
     void writeMatrix(Eigen::MatrixXd data, std::string filename,
                      double cell_size, PointViewPtr view);
+    Eigen::MatrixXd computeSplineResiduals(Eigen::MatrixXd x_prev, 
+                                           Eigen::MatrixXd y_prev,
+                                           Eigen::MatrixXd z_prev,
+                                           Eigen::MatrixXd x_samp,
+                                           Eigen::MatrixXd y_samp,
+                                           Eigen::MatrixXd z_samp,
+                                           double cell_size);
     void writeControl(Eigen::MatrixXd cx, Eigen::MatrixXd cy, Eigen::MatrixXd cz, std::string filename);
     Eigen::MatrixXd padMatrix(Eigen::MatrixXd data, int radius);
     Eigen::MatrixXd matrixOpen(Eigen::MatrixXd data, int radius);
     Eigen::MatrixXd matrixClose(Eigen::MatrixXd data, int radius);
-    Eigen::MatrixXd computeResidual(Eigen::MatrixXd cz,
-                                    Eigen::MatrixXd surface);
-    Eigen::MatrixXd computeThresholds(Eigen::MatrixXd T, int radius);
     void downsampleMin(Eigen::MatrixXd *cx, Eigen::MatrixXd *cy,
                        Eigen::MatrixXd* cz, Eigen::MatrixXd *dcx,
                        Eigen::MatrixXd *dcy, Eigen::MatrixXd* dcz,

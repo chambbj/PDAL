@@ -90,13 +90,18 @@ int MongusFilter::getRowIndex(double y, double cell_size)
     return static_cast<int>(floor((m_maxRow - y) / cell_size));
 }
 
-Eigen::MatrixXd MongusFilter::TPS(Eigen::MatrixXd cx, Eigen::MatrixXd cy,
-                                  Eigen::MatrixXd cz, double cell_size)
+Eigen::MatrixXd MongusFilter::computeSplineResiduals(Eigen::MatrixXd x_prev,
+                                                     Eigen::MatrixXd y_prev,
+                                                     Eigen::MatrixXd z_prev,
+                                                     Eigen::MatrixXd x_samp,
+                                                     Eigen::MatrixXd y_samp,
+                                                     Eigen::MatrixXd z_samp,
+                                                     double cell_size)
 {
     using namespace Eigen;
 
-    int num_rows = cz.rows();
-    int num_cols = cz.cols();
+    int num_rows = z_samp.rows();
+    int num_cols = z_samp.cols();
     int max_row = m_bounds.miny + num_rows * cell_size;
 
     MatrixXd S = MatrixXd::Zero(num_rows, num_cols);
@@ -109,17 +114,20 @@ Eigen::MatrixXd MongusFilter::TPS(Eigen::MatrixXd cx, Eigen::MatrixXd cy,
             // interpolated surface within a local neighbourhood (e.g. a 7 x 7
             // neighbourhood is used in our case) of the cell being filtered.
             int radius = 3;
+            
+            int inner_col = std::floor(outer_col/2);
+            int inner_row = std::floor(outer_row/2);
 
-            int cs = clamp(outer_col-radius, 0, num_cols-1);
-            int ce = clamp(outer_col+radius, 0, num_cols-1);
+            int cs = clamp(inner_col-radius, 0, z_prev.cols()-1);
+            int ce = clamp(inner_col+radius, 0, z_prev.cols()-1);
             int col_size = ce - cs + 1;
-            int rs = clamp(outer_row-radius, 0, num_rows-1);
-            int re = clamp(outer_row+radius, 0, num_rows-1);
+            int rs = clamp(inner_row-radius, 0, z_prev.rows()-1);
+            int re = clamp(inner_row+radius, 0, z_prev.rows()-1);
             int row_size = re - rs + 1;
 
-            MatrixXd Xn = cx.block(rs, cs, row_size, col_size);
-            MatrixXd Yn = cy.block(rs, cs, row_size, col_size);
-            MatrixXd Hn = cz.block(rs, cs, row_size, col_size);
+            MatrixXd Xn = x_prev.block(rs, cs, row_size, col_size);
+            MatrixXd Yn = y_prev.block(rs, cs, row_size, col_size);
+            MatrixXd Hn = z_prev.block(rs, cs, row_size, col_size);
 
             int nsize = Hn.size();
             VectorXd T = VectorXd::Zero(nsize);
@@ -129,13 +137,9 @@ Eigen::MatrixXd MongusFilter::TPS(Eigen::MatrixXd cx, Eigen::MatrixXd cy,
             for (auto id = 0; id < Hn.size(); ++id)
             {
                 double xj = Xn(id);
-                if (std::isnan(xj))
-                    continue;
                 double yj = Yn(id);
-                if (std::isnan(yj))
-                    continue;
                 double zj = Hn(id);
-                if (zj == std::numeric_limits<double>::max())
+                if (std::isnan(xj) || std::isnan(yj) || std::isnan(zj))
                     continue;
                 T(id) = zj;
                 P.row(id) << 1, xj, yj;
@@ -144,10 +148,9 @@ Eigen::MatrixXd MongusFilter::TPS(Eigen::MatrixXd cx, Eigen::MatrixXd cy,
                     if (id == id2)
                         continue;
                     double xk = Xn(id2);
-                    if (std::isnan(xk))
-                        continue;
                     double yk = Yn(id2);
-                    if (std::isnan(yk))
+                    double zk = Hn(id2);
+                    if (std::isnan(xk) || std::isnan(yk) || std::isnan(zk))
                         continue;
                     double rsqr = (xj - xk) * (xj - xk) + (yj - yk) * (yj - yk);
                     if (rsqr == 0.0)
@@ -170,20 +173,14 @@ Eigen::MatrixXd MongusFilter::TPS(Eigen::MatrixXd cx, Eigen::MatrixXd cy,
             VectorXd w = x.head(nsize);
 
             double sum = 0.0;
-            double xi = m_bounds.minx + outer_col * cell_size + cell_size / 2;
-            double xi2 = cx(outer_row, outer_col);
-            double yi = max_row - (outer_row * cell_size + cell_size / 2);
-            double yi2 = cy(outer_row, outer_col);
-            double zi = cz(outer_row, outer_col);
-            if (zi == std::numeric_limits<double>::max())
-                continue;
+            double xi2 = x_samp(outer_row, outer_col);
+            double yi2 = y_samp(outer_row, outer_col);
             for (auto j = 0; j < nsize; ++j)
             {
                 double xj = Xn(j);
-                if (std::isnan(xj))
-                    continue;
                 double yj = Yn(j);
-                if (std::isnan(yj))
+                double zj = Hn(j);
+                if (std::isnan(xj) || std::isnan(yj) || std::isnan(zj))
                     continue;
                 double rsqr = (xj - xi2) * (xj - xi2) + (yj - yi2) * (yj - yi2);
                 if (rsqr == 0.0)
@@ -191,55 +188,7 @@ Eigen::MatrixXd MongusFilter::TPS(Eigen::MatrixXd cx, Eigen::MatrixXd cy,
                 sum += w(j) * rsqr * std::log10(std::sqrt(rsqr));
             }
 
-            S(outer_row, outer_col) = a(0) + a(1)*xi + a(2)*yi + sum;
-
-            // std::cerr << std::fixed;
-            // std::cerr << std::setprecision(3)
-            //           << std::left
-            //           << "S(" << outer_row << "," << outer_col << "): "
-            //           << std::setw(10)
-            //           << S(outer_row, outer_col)
-            //           << std::setw(3)
-            //           << "\tz: "
-            //           << std::setw(10)
-            //           << zi
-            //           << std::setw(7)
-            //           << "\tzdiff: "
-            //           << std::setw(5)
-            //           << zi - S(outer_row, outer_col)
-            //           << std::setw(7)
-            //           << "\txdiff: "
-            //           << std::setw(5)
-            //           << xi2 - xi
-            //           << std::setw(7)
-            //           << "\tydiff: "
-            //           << std::setw(5)
-            //           << yi2 - yi
-            //           << std::setw(7)
-            //           << "\t# pts: "
-            //           << std::setw(3)
-            //           << nsize
-            //           << std::setw(5)
-            //           << "\tsum: "
-            //           << std::setw(10)
-            //           << sum
-            //           << std::setw(9)
-            //           << "\tw.sum(): "
-            //           << std::setw(5)
-            //           << w.sum()
-            //           << std::setw(6)
-            //           << "\txsum: "
-            //           << std::setw(5)
-            //           << w.dot(P.col(1))
-            //           << std::setw(6)
-            //           << "\tysum: "
-            //           << std::setw(5)
-            //           << w.dot(P.col(2))
-            //           << std::setw(3)
-            //           << "\ta: "
-            //           << std::setw(8)
-            //           << a.transpose()
-            //           << std::endl;
+            S(outer_row, outer_col) = a(0) + a(1)*xi2 + a(2)*yi2 + sum;
         }
     }
 
@@ -292,8 +241,8 @@ void MongusFilter::writeMatrix(Eigen::MatrixXd data, std::string filename, doubl
     if (mpDstDS)
     {
         // loop over the raster and determine max slope at each location
-        int cs = 1, ce = cols - 1;
-        int rs = 1, re = rows - 1;
+        int cs = 0, ce = cols;
+        int rs = 0, re = rows;
         float *poRasterData = new float[cols*rows];
         for (auto i=0; i<cols*rows; i++)
         {
@@ -354,9 +303,7 @@ void MongusFilter::writeControl(Eigen::MatrixXd cx, Eigen::MatrixXd cy, Eigen::M
     PointId i = 0;
     for (auto j = 0; j < cz.size(); ++j)
     {
-        if (std::isnan(cx(j)) || std::isnan(cy(j)))
-            continue;
-        if (cz(j) == std::numeric_limits<double>::max())
+        if (std::isnan(cx(j)) || std::isnan(cy(j)) || std::isnan(cz(j)))
             continue;
         view->setField(Id::X, i, cx(j));
         view->setField(Id::Y, i, cy(j));
@@ -400,6 +347,7 @@ std::vector<PointId> MongusFilter::processGround(PointViewPtr view)
     MatrixXd cz(m_numRows, m_numCols);
     cz.setConstant(std::numeric_limits<double>::max());
 
+    // find initial set of Z minimums at native resolution
     for (auto i = 0; i < np; ++i)
     {
         using namespace Dimension;
@@ -417,12 +365,16 @@ std::vector<PointId> MongusFilter::processGround(PointViewPtr view)
             cz(r, c) = z;
         }
     }
+    
+    writeControl(cx, cy, cz, "grid_mins.laz");
 
     // In our case, 2D structural elements of circular shape are employed and
     // sufficient accuracy is achieved by using a larger window size for opening
     // (W11) than for closing (W9).
     MatrixXd mo = matrixOpen(cz, 11);
+    writeControl(cx, cy, mo, "grid_open.laz");
     MatrixXd mc = matrixClose(mo, 9);
+    writeControl(cx, cy, mc, "grid_close.laz");
 
     // ...in order to minimize the distortions caused by such filtering, the
     // output points ... are compared to C and only ci with significantly lower
@@ -432,63 +384,107 @@ std::vector<PointId> MongusFilter::processGround(PointViewPtr view)
         if ((mc(i) - cz(i)) >= 1.0)
             cz(i) = mc(i);
     }
+    // cz is still at native resolution, with low points replaced by morphological operators
+    writeControl(cx, cy, cz, "grid_mins_adjusted.laz");
 
     // downsample control at max_level
     int level = m_l;
-    double cur_cell_size = m_cellSize * std::pow(2, level-1);
+    double cur_cell_size = m_cellSize * std::pow(2, level);
+    // for max level = 8 and cell size 1, this is 256
 
     MatrixXd x_prev, y_prev, z_prev;
 
     // Top-level control samples are assumed to be ground points, no filtering
     // is applied.
     downsampleMin(&cx, &cy, &cz, &x_prev, &y_prev, &z_prev, cur_cell_size);
+    // x|y|z_prev are control points downsampled to coarsest resolution for the hierarchy, e.g., for 512x512, this would be 2x2
+    writeControl(x_prev, y_prev, z_prev, "control_init.laz");
 
     // Point-filtering is performed iteratively at each level of the
     // control-points hierarchy in a top-down fashion
     for (auto l = level-1; l > 0; --l)
     {
         std::cerr << "Level " << l << std::endl;
+        cur_cell_size /= 2;
+        // 128, 64, 32, 16, 8, 4, 1
 
         // compute TPS with update control at level
 
         // The interpolated surface is estimated based on the filtered set of
         // TPS control-points at the previous level of hierarchy
-        MatrixXd surface = TPS(x_prev, y_prev, z_prev, cur_cell_size);
+        // MatrixXd surface = TPS(x_prev, y_prev, z_prev, cur_cell_size);
+        // 4x4, 8x8, 16x16, 32x32, 64x64, 128x128, 256x256
 
         // downsample control at level
-        cur_cell_size /= 2;
         MatrixXd x_samp, y_samp, z_samp;
         downsampleMin(&cx, &cy, &cz, &x_samp, &y_samp, &z_samp, cur_cell_size);
-
-        MatrixXd R = computeResidual(z_samp, surface);
-        MatrixXd maxZ = matrixOpen(R, 2*l);
-        MatrixXd T = R - maxZ;
-        MatrixXd t = computeThresholds(T, 2*l);
-
-        // the time complexity of the approach is reduced by filtering only the
-        // control-points in each iteration
-        for (auto c = 0; c < T.cols(); ++c)
+        // 4x4, 8x8, 16x16, 32x32, 64x64, 128x128, 256x256
+        
+        MatrixXd surface = computeSplineResiduals(x_prev, y_prev, z_prev, x_samp, y_samp, z_samp, cur_cell_size);
+        
+        if (l == 3)
         {
-            for (auto r = 0; r < T.rows(); ++r)
+            log()->get(LogLevel::Debug) << cx.rows() << "\t" << cx.cols() << std::endl;
+            log()->get(LogLevel::Debug) << x_prev.rows() << "\t" << x_prev.cols() << std::endl;
+            log()->get(LogLevel::Debug) << x_samp.rows() << "\t" << x_samp.cols() << std::endl;
+            log()->get(LogLevel::Debug) << surface.rows() << "\t" << surface.cols() << std::endl;
+            log()->get(LogLevel::Debug) << "x: " << cx.row(1) << std::endl;
+            log()->get(LogLevel::Debug) << "z: " << cz.row(1) << std::endl;
+            log()->get(LogLevel::Debug) << "control_x: " << x_prev.row(0) << std::endl;
+            log()->get(LogLevel::Debug) << "control_z: " << z_prev.row(0) << std::endl;
+            log()->get(LogLevel::Debug) << "samples_x: " << x_samp.row(0) << std::endl;
+            log()->get(LogLevel::Debug) << "samples_z: " << z_samp.row(0) << std::endl;
+            log()->get(LogLevel::Debug) << "spline: " << surface.row(0) << std::endl;
+        }
+        
+        char bufs[256];
+        sprintf(bufs, "spline_%d.laz", l);
+        std::string names(bufs);
+        writeControl(x_samp, y_samp, z_samp, names);
+
+        MatrixXd R = z_samp - surface;
+        
+        auto median = [](std::vector<double> vals)
+        {
+            // this only works for even number of values, but for matrices, this
+            // is a safe assumption anyway
+            std::sort(vals.begin(), vals.end());
+            return (vals[vals.size()/2+1]+vals[vals.size()/2])/2;
+        };
+        
+        // compute median of residuals
+        std::vector<double> allres(R.data(), R.data()+R.size());
+        double m = median(allres);
+        
+        // compute absolute difference from median
+        ArrayXd ad = (R.array()-m).abs();
+        std::vector<double> absdiff(ad.data(), ad.data()+ad.size());
+        
+        // compute median of absolute differences
+        double mad = 1.4862 * median(absdiff);
+      
+        // divice absolute differences by MAD to find outliers
+        MatrixXd M = (ad / mad).matrix();
+        
+        double perc = static_cast<double>((M.array() > 2).count());
+        perc /= static_cast<double>(R.size());
+        perc *= 100.0;
+        log()->get(LogLevel::Debug) << "median=" << m
+                                    << "; MAD=" << mad
+                                    << "; " << (M.array() > 2).count()
+                                    << " outliers out of " << R.size()
+                                    << " control points (" << perc << "%)\n";
+
+        // If the TPS control-point is recognized as a non-ground point, it is
+        // replaced by the interpolated point. The time complexity of the
+        // approach is reduced by filtering only the control-points in each
+        // iteration.
+        for (auto c = 0; c < M.cols(); ++c)
+        {
+            for (auto r = 0; r < M.rows(); ++r)
             {
-                // If the TPS control-point is recognized as a non-ground point,
-                // it is replaced by the interpolated point.
-                if (T(r,c) > t(r,c))
-                {
-                    int rr = std::floor(r/2);
-                    int cc = std::floor(c/2);
-                    int rs = cur_cell_size * r;
-                    int cs = cur_cell_size * c;
-                    MatrixXd block = cz.block(rs, cs, cur_cell_size, cur_cell_size);
-                    MatrixXd::Index ri, ci;
-                    block.minCoeff(&ri, &ci);
-
-                    ri += rs;
-                    ci += cs;
-
-                    z_samp(r, c) = surface(rr, cc);
-                    // cz(ri, ci) = surface(rr, cc);
-                }
+                if (M(r,c) > 2)
+                    z_samp(r, c) = surface(r, c);
             }
         }
 
@@ -497,7 +493,7 @@ std::vector<PointId> MongusFilter::processGround(PointViewPtr view)
             char buffer[256];
             sprintf(buffer, "surface_%d.tif", l);
             std::string name(buffer);
-            writeMatrix(surface, name, cur_cell_size*2, view);
+            writeMatrix(surface, name, cur_cell_size, view);
 
             char bufm[256];
             sprintf(bufm, "master_control_%d.laz", l);
@@ -514,21 +510,11 @@ std::vector<PointId> MongusFilter::processGround(PointViewPtr view)
             sprintf(rbuf, "residual_%d.tif", l);
             std::string rbufn(rbuf);
             writeMatrix(R, rbufn, cur_cell_size, view);
-
-            char obuf[256];
-            sprintf(obuf, "open_%d.tif", l);
-            std::string obufn(obuf);
-            writeMatrix(maxZ, obufn, cur_cell_size, view);
-
-            char Tbuf[256];
-            sprintf(Tbuf, "tophat_%d.tif", l);
-            std::string Tbufn(Tbuf);
-            writeMatrix(T, Tbufn, cur_cell_size, view);
-
-            char tbuf[256];
-            sprintf(tbuf, "thresh_%d.tif", l);
-            std::string tbufn(tbuf);
-            writeMatrix(t, tbufn, cur_cell_size, view);
+            
+            char mbuf[256];
+            sprintf(mbuf, "median_%d.tif", l);
+            std::string mbufn(mbuf);
+            writeMatrix(M, mbufn, cur_cell_size, view);
 
             char buf2[256];
             sprintf(buf2, "filtered_control_%d.laz", l);
@@ -540,41 +526,37 @@ std::vector<PointId> MongusFilter::processGround(PointViewPtr view)
         y_prev = y_samp;
         z_prev = z_samp;
     }
-
-    MatrixXd surface = TPS(x_prev, y_prev, z_prev, cur_cell_size);
-    MatrixXd R = computeResidual(cz, surface);
-    MatrixXd maxZ = matrixOpen(R, 2);
-    MatrixXd T = R - maxZ;
-    MatrixXd t = computeThresholds(T, 2);
-
+        
+    MatrixXd surface = computeSplineResiduals(x_prev, y_prev, z_prev, cx, cy, cz, m_cellSize);
+        
     if (log()->getLevel() > LogLevel::Debug5)
     {
-        writeControl(cx, cy, mc, "closed.laz");
-
+    //     writeControl(cx, cy, mc, "closed.laz");
+    // 
         char buffer[256];
         sprintf(buffer, "final_surface.tif");
         std::string name(buffer);
-        writeMatrix(surface, name, cur_cell_size, view);
-
-        char rbuf[256];
-        sprintf(rbuf, "final_residual.tif");
-        std::string rbufn(rbuf);
-        writeMatrix(R, rbufn, cur_cell_size, view);
-
-        char obuf[256];
-        sprintf(obuf, "final_opened.tif");
-        std::string obufn(obuf);
-        writeMatrix(maxZ, obufn, cur_cell_size, view);
-
-        char Tbuf[256];
-        sprintf(Tbuf, "final_tophat.tif");
-        std::string Tbufn(Tbuf);
-        writeMatrix(T, Tbufn, cur_cell_size, view);
-
-        char tbuf[256];
-        sprintf(tbuf, "final_thresh.tif");
-        std::string tbufn(tbuf);
-        writeMatrix(t, tbufn, cur_cell_size, view);
+        writeMatrix(surface, name, m_cellSize, view);
+    // 
+    //     char rbuf[256];
+    //     sprintf(rbuf, "final_residual.tif");
+    //     std::string rbufn(rbuf);
+    //     writeMatrix(R, rbufn, cur_cell_size, view);
+    // 
+    //     char obuf[256];
+    //     sprintf(obuf, "final_opened.tif");
+    //     std::string obufn(obuf);
+    //     writeMatrix(maxZ, obufn, cur_cell_size, view);
+    // 
+    //     char Tbuf[256];
+    //     sprintf(Tbuf, "final_tophat.tif");
+    //     std::string Tbufn(Tbuf);
+    //     writeMatrix(T, Tbufn, cur_cell_size, view);
+    // 
+    //     char tbuf[256];
+    //     sprintf(tbuf, "final_thresh.tif");
+    //     std::string tbufn(tbuf);
+    //     writeMatrix(t, tbufn, cur_cell_size, view);
     }
 
     // apply final filtering (top hat) using raw points against TPS
@@ -592,7 +574,7 @@ std::vector<PointId> MongusFilter::processGround(PointViewPtr view)
         int r = clamp(getRowIndex(y, cur_cell_size), 0, m_numRows-1);
 
         double res = z - surface(r, c);
-        if (res < t(r, c))
+        if (res < 1.0)
             groundIdx.push_back(i);
     }
 
@@ -636,28 +618,6 @@ void MongusFilter::downsampleMin(Eigen::MatrixXd *cx, Eigen::MatrixXd *cy,
             }
         }
     }
-}
-
-Eigen::MatrixXd MongusFilter::computeResidual(Eigen::MatrixXd cz,
-        Eigen::MatrixXd surface)
-{
-    using namespace Eigen;
-
-    MatrixXd R = MatrixXd::Zero(cz.rows(), cz.cols());
-    for (auto c = 0; c < cz.cols(); ++c)
-    {
-        for (auto r = 0; r < cz.rows(); ++r)
-        {
-            if (cz(r, c) == std::numeric_limits<double>::max())
-                continue;
-
-            int rr = std::floor(r/2);
-            int cc = std::floor(c/2);
-            R(r, c) = cz(r, c) - surface(rr, cc);
-        }
-    }
-
-    return R;
 }
 
 Eigen::MatrixXd MongusFilter::padMatrix(Eigen::MatrixXd d, int r)
@@ -796,46 +756,6 @@ Eigen::MatrixXd MongusFilter::matrixClose(Eigen::MatrixXd data, int radius)
     }
 
     return minZ.block(radius, radius, data.rows(), data.cols());
-}
-
-Eigen::MatrixXd MongusFilter::computeThresholds(Eigen::MatrixXd T, int radius)
-{
-    using namespace Eigen;
-
-    MatrixXd t = MatrixXd::Zero(T.rows(), T.cols());
-    for (auto c = 0; c < T.cols(); ++c)
-    {
-        for (auto r = 0; r < T.rows(); ++r)
-        {
-            double M1 = 0;
-            double M2 = 0;
-            int n = 0;
-
-            int cs = clamp(c-radius, 0, T.cols()-1);
-            int ce = clamp(c+radius, 0, T.cols()-1);
-            int rs = clamp(r-radius, 0, T.rows()-1);
-            int re = clamp(r+radius, 0, T.rows()-1);
-
-            for (auto col = cs; col <= ce; ++col)
-            {
-                for (auto row = rs; row <= re; ++row)
-                {
-                    if ((row-r)*(row-r)+(col-c)*(col-c) > radius*radius)
-                        continue;
-                    int n1 = n;
-                    n++;
-                    double delta = T(row, col) - M1;
-                    double delta_n = delta / n;
-                    double term1 = delta * delta_n * n1;
-                    M1 += delta_n;
-                    M2 += term1;
-                }
-            }
-            t(r, c) = M1 + m_k * std::sqrt(M2/(n-1));
-        }
-    }
-
-    return t;
 }
 
 PointViewSet MongusFilter::run(PointViewPtr view)
