@@ -443,10 +443,24 @@ std::vector<PointId> MongusFilter::processGround(PointViewPtr view)
 
         if (l == 7)
             log()->get(LogLevel::Debug) << R << std::endl;
+            
+        double sum = 0.0;
+        double maxcoeff = std::numeric_limits<double>::lowest();
+        double mincoeff = std::numeric_limits<double>::max();
+        for (auto i = 0; i < R.size(); ++i)
+        {
+            if (std::isnan(R(i)))
+                continue;
+            if (R(i) > maxcoeff)
+                maxcoeff = R(i);
+            if (R(i) < mincoeff)
+                mincoeff = R(i);
+            sum += R(i);
+        }
 
-        log()->get(LogLevel::Debug) << "R: max=" << R.maxCoeff()
-                                    << "; min=" << R.minCoeff()
-                                    << "; sum=" << R.sum()
+        log()->get(LogLevel::Debug) << "R: max=" << maxcoeff
+                                    << "; min=" << mincoeff
+                                    << "; sum=" << sum
                                     << "; size=" << R.size() << std::endl;
 
         // median takes an unsorted vector, possibly containing NANs, and
@@ -500,10 +514,24 @@ std::vector<PointId> MongusFilter::processGround(PointViewPtr view)
         // Divide absolute differences by MAD. Values greater than 2 are
         // considered outliers.
         MatrixXd M = (ad / mad).matrix();
+        
+        sum = 0.0;
+        maxcoeff = std::numeric_limits<double>::lowest();
+        mincoeff = std::numeric_limits<double>::max();
+        for (auto i = 0; i < M.size(); ++i)
+        {
+            if (std::isnan(M(i)))
+                continue;
+            if (M(i) > maxcoeff)
+                maxcoeff = M(i);
+            if (M(i) < mincoeff)
+                mincoeff = M(i);
+            sum += M(i);
+        }
 
-        log()->get(LogLevel::Debug) << "M: max=" << M.maxCoeff()
-                                    << "; min=" << M.minCoeff()
-                                    << "; sum=" << M.sum()
+        log()->get(LogLevel::Debug) << "M: max=" << maxcoeff
+                                    << "; min=" << mincoeff
+                                    << "; sum=" << sum
                                     << "; size=" << M.size() << std::endl;
 
         double madthresh = 2.0;
@@ -521,11 +549,14 @@ std::vector<PointId> MongusFilter::processGround(PointViewPtr view)
         // replaced by the interpolated point. The time complexity of the
         // approach is reduced by filtering only the control-points in each
         // iteration.
-        for (auto i = 0; i < M.size(); ++i)
+        if (l < 3)
         {
-            if (M(i) > madthresh)
-                z_samp(i) = std::numeric_limits<double>::quiet_NaN();
-                // z_samp(i) = surface(i);
+            for (auto i = 0; i < M.size(); ++i)
+            {
+                if (M(i) > madthresh)
+                    z_samp(i) = std::numeric_limits<double>::quiet_NaN();
+                    // z_samp(i) = surface(i);
+            }
         }
 
         if (log()->getLevel() > LogLevel::Debug5)
