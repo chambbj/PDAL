@@ -47,6 +47,8 @@
 #include <eigenvalues/EigenvaluesFilter.hpp>
 #include <estimaterank/EstimateRankFilter.hpp>
 #include <ferry/FerryFilter.hpp>
+#include <framemad/FrameMADFilter.hpp>
+#include <gmmad/GMMADFilter.hpp>
 #include <hag/HAGFilter.hpp>
 #include <merge/MergeFilter.hpp>
 #include <mortonorder/MortonOrderFilter.hpp>
@@ -231,6 +233,8 @@ StageFactory::StageFactory(bool no_plugins)
     PluginManager::initializePlugin(EigenvaluesFilter_InitPlugin);
     PluginManager::initializePlugin(EstimateRankFilter_InitPlugin);
     PluginManager::initializePlugin(FerryFilter_InitPlugin);
+    PluginManager::initializePlugin(FrameMADFilter_InitPlugin);
+    PluginManager::initializePlugin(GMMADFilter_InitPlugin);
     PluginManager::initializePlugin(HAGFilter_InitPlugin);
     PluginManager::initializePlugin(MergeFilter_InitPlugin);
     PluginManager::initializePlugin(MortonOrderFilter_InitPlugin);

@@ -79,7 +79,16 @@ RangeFilter::Range parseRange(const std::string& r)
         count = Utils::extract(r, pos, (int(*)(int))std::isspace);
         pos += count;
 
-        count = Utils::extract(r, pos, (int(*)(int))std::isalpha);
+        auto isAlphaOrBlank = [](int ch)
+        {
+          if (std::isalpha(ch))
+              return 1;
+          if (std::isblank(ch))
+              return 1;
+          return 0;
+        };
+
+        count = Utils::extract(r, pos, (int(*)(int))isAlphaOrBlank);
         if (count == 0)
            throw std::string("No dimension name.");
         name = r.substr(pos, count);
@@ -247,4 +256,3 @@ PointViewSet RangeFilter::run(PointViewPtr inView)
 }
 
 } // namespace pdal
-
