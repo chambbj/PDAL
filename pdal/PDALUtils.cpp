@@ -37,10 +37,10 @@
 #include <arbiter/arbiter.hpp>
 
 #include <pdal/KDIndex.hpp>
-#include <pdal/PDALUtils.hpp>
 #include <pdal/PointView.hpp>
 #include <pdal/Options.hpp>
 #include <pdal/util/FileUtils.hpp>
+#include <pdal/util/Utils.hpp>
 
 #ifndef _WIN32
 #include <dlfcn.h>
@@ -405,7 +405,6 @@ double computeHausdorff(PointViewPtr srcView, PointViewPtr candView)
     return (std::max)(maxDistSrcToCand, maxDistCandToSrc);
 }
 
-
 std::string dllDir()
 {
     std::string s;
@@ -429,6 +428,103 @@ std::string dllDir()
         s = info.dli_fname;
 #endif
     return FileUtils::getDirectory(s);
+}
+
+std::vector<PointId> extendedLocalMinimum(PointView& view, size_t rows,
+    size_t cols, double cell_size, BOX2D bounds)
+{
+    using namespace Dimension;
+    
+    std::vector<PointId> output;
+
+    // Index elevation values by row and column.
+    std::map<uint32_t, std::vector<std::pair<PointId, double>>> hash;
+    for (PointId i = 0; i < view.size(); ++i)
+    {
+       double x = view.getFieldAs<double>(Id::X, i);
+       double y = view.getFieldAs<double>(Id::Y, i);
+       double z = view.getFieldAs<double>(Id::Z, i);
+
+       int c = Utils::clamp(static_cast<size_t>(floor(x-bounds.minx)/cell_size), size_t(0), size_t(cols-1));
+       int r = Utils::clamp(static_cast<size_t>(floor(y-bounds.miny)/cell_size), size_t(0), size_t(rows-1));
+       
+       hash[r*cols+c].push_back(std::make_pair(i, z));
+    }
+
+    // For each grid cell, sort elevations and detect local minimum, rejecting
+    // low outliers.
+    for (size_t c = 0; c < cols; ++c)
+    {
+       for (size_t r = 0; r < rows; ++r)
+       {
+           std::vector<std::pair<PointId, double>> cp(hash[r*cols+c]);
+           if (cp.empty())
+               continue;
+          
+           auto cmp = [](const std::pair<PointId, double> &p1, const std::pair<PointId, double> &p2)
+           {
+               return p1.second < p2.second;
+           };
+           std::sort(cp.begin(), cp.end(), cmp);
+           if (cp.size() == 1)
+           {
+               output.push_back(cp[0].first);
+               continue;
+           }
+           for (size_t i = 0; i < cp.size()-1; ++i)
+           {
+               if (std::fabs(cp[i].second - cp[i+1].second) < 1.0)
+               {
+                   output.push_back(cp[0].first);
+                   break;
+               }
+           }
+       }
+    }
+    
+    return output;
+}
+
+std::vector<PointId> localMinimum(PointView& view, std::vector<PointId> idx,
+    size_t rows, size_t cols, double cell_size, BOX2D bounds)
+{
+    using namespace Dimension;
+    
+    std::vector<PointId> output;
+
+    // Index elevation values by row and column.
+    std::map<uint32_t, std::vector<std::pair<PointId, double>>> hash;
+    for (auto const& i : idx)
+    {
+       double x = view.getFieldAs<double>(Id::X, i);
+       double y = view.getFieldAs<double>(Id::Y, i);
+       double z = view.getFieldAs<double>(Id::Z, i);
+
+       int c = Utils::clamp(static_cast<size_t>(floor(x-bounds.minx)/cell_size), size_t(0), size_t(cols-1));
+       int r = Utils::clamp(static_cast<size_t>(floor(y-bounds.miny)/cell_size), size_t(0), size_t(rows-1));
+       
+       hash[r*cols+c].push_back(std::make_pair(i, z));
+    }
+
+    // For each grid cell, sort elevations and detect local minimum
+    for (size_t c = 0; c < cols; ++c)
+    {
+       for (size_t r = 0; r < rows; ++r)
+       {
+           std::vector<std::pair<PointId, double>> cp(hash[r*cols+c]);
+           if (cp.empty())
+               continue;
+          
+           auto cmp = [](const std::pair<PointId, double> &p1, const std::pair<PointId, double> &p2)
+           {
+               return p1.second < p2.second;
+           };
+           std::sort(cp.begin(), cp.end(), cmp);
+           output.push_back(cp[0].first);
+       }
+    }
+    
+    return output;
 }
 
 } // namespace Utils

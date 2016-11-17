@@ -255,6 +255,128 @@ Eigen::MatrixXd extendedLocalMinimum(const PointView& view, int rows, int cols,
     return ZImin;
 }
 
+Eigen::MatrixXd matrixClose(Eigen::MatrixXd data, int radius)
+{
+    using namespace Eigen;
+
+    MatrixXd data2 = padMatrix(data, radius);
+
+    int nrows = data2.rows();
+    int ncols = data2.cols();
+
+    MatrixXd minZ(nrows, ncols);
+    minZ.setConstant(std::numeric_limits<double>::max());
+    MatrixXd maxZ(nrows, ncols);
+    maxZ.setConstant(std::numeric_limits<double>::lowest());
+    for (auto c = 0; c < ncols; ++c)
+    {
+        int cs = Utils::clamp(c-radius, 0, ncols-1);
+        int ce = Utils::clamp(c+radius, 0, ncols-1);
+
+        for (auto r = 0; r < nrows; ++r)
+        {
+            int rs = Utils::clamp(r-radius, 0, nrows-1);
+            int re = Utils::clamp(r+radius, 0, nrows-1);
+
+            for (auto col = cs; col <= ce; ++col)
+            {
+                for (auto row = rs; row <= re; ++row)
+                {
+                    if ((row-r)*(row-r)+(col-c)*(col-c) > radius*radius)
+                        continue;
+                    if (data2(row, col) > maxZ(r, c))
+                        maxZ(r, c) = data2(row, col);
+                }
+            }
+        }
+    }
+    for (auto c = 0; c < ncols; ++c)
+    {
+        int cs = Utils::clamp(c-radius, 0, ncols-1);
+        int ce = Utils::clamp(c+radius, 0, ncols-1);
+
+        for (auto r = 0; r < nrows; ++r)
+        {
+            int rs = Utils::clamp(r-radius, 0, nrows-1);
+            int re = Utils::clamp(r+radius, 0, nrows-1);
+
+            for (auto col = cs; col <= ce; ++col)
+            {
+                for (auto row = rs; row <= re; ++row)
+                {
+                    if ((row-r)*(row-r)+(col-c)*(col-c) > radius*radius)
+                        continue;
+                    if (maxZ(row, col) < minZ(r, c))
+                        minZ(r, c) = maxZ(row, col);
+                }
+            }
+        }
+    }
+
+    return minZ.block(radius, radius, data.rows(), data.cols());
+}
+
+Eigen::MatrixXd matrixOpen(Eigen::MatrixXd data, int radius)
+{
+    using namespace Eigen;
+
+    MatrixXd data2 = padMatrix(data, radius);
+
+    int nrows = data2.rows();
+    int ncols = data2.cols();
+
+    MatrixXd minZ(nrows, ncols);
+    minZ.setConstant(std::numeric_limits<double>::max());
+    MatrixXd maxZ(nrows, ncols);
+    maxZ.setConstant(std::numeric_limits<double>::lowest());
+    for (auto c = 0; c < ncols; ++c)
+    {
+        int cs = Utils::clamp(c-radius, 0, ncols-1);
+        int ce = Utils::clamp(c+radius, 0, ncols-1);
+
+        for (auto r = 0; r < nrows; ++r)
+        {
+            int rs = Utils::clamp(r-radius, 0, nrows-1);
+            int re = Utils::clamp(r+radius, 0, nrows-1);
+
+            for (auto col = cs; col <= ce; ++col)
+            {
+                for (auto row = rs; row <= re; ++row)
+                {
+                    if ((row-r)*(row-r)+(col-c)*(col-c) > radius*radius)
+                        continue;
+                    if (data2(row, col) < minZ(r, c))
+                        minZ(r, c) = data2(row, col);
+                }
+            }
+        }
+    }
+    for (auto c = 0; c < ncols; ++c)
+    {
+        int cs = Utils::clamp(c-radius, 0, ncols-1);
+        int ce = Utils::clamp(c+radius, 0, ncols-1);
+
+        for (auto r = 0; r < nrows; ++r)
+        {
+            int rs = Utils::clamp(r-radius, 0, nrows-1);
+            int re = Utils::clamp(r+radius, 0, nrows-1);
+
+            for (auto col = cs; col <= ce; ++col)
+            {
+                for (auto row = rs; row <= re; ++row)
+                {
+                    if ((row-r)*(row-r)+(col-c)*(col-c) > radius*radius)
+                        continue;
+                    if (minZ(row, col) > maxZ(r, c))
+                        maxZ(r, c) = minZ(row, col);
+                }
+            }
+        }
+    }
+
+    return maxZ.block(radius, radius, data.rows(), data.cols());
+}
+
 void dilateDiamond(std::vector<double>& data, size_t rows, size_t cols, int iterations)
 {
     std::vector<double> out(data.size(), std::numeric_limits<double>::lowest());

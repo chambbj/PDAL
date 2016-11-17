@@ -341,4 +341,132 @@ inline void MetadataNodeImpl::setValue(const Eigen::MatrixXd& matrix)
     m_value = Utils::toString(matrix);
 }
 
+/**
+  Perform a morphological dilation of the input matrix.
+
+  Performs a morphological dilation of the input matrix using a circular
+  structuring element of given radius.
+
+  \param data the input matrix.
+  \param radius the radius of the circular structuring element.
+  \return the morphological dilation of the input matrix.
+*/
+template <typename Derived>
+PDAL_DLL Derived dilate(const Eigen::MatrixBase<Derived>& A, int radius)
+{
+    Derived B = Derived::Constant(A.rows(), A.cols(), 0);
+
+    int length = 2 * radius + 1;
+    bool match_flag;
+    for (int c = 0; c < A.cols(); ++c)
+    {
+        for (int r = 0; r < A.rows(); ++r)
+        {
+            match_flag = false;
+            for (int k = 0; k < length; ++k)
+            {
+                if (match_flag)
+                    break;
+                int cdiff = k-radius;
+                int cpos = c+cdiff;
+                if (cpos < 0 || cpos >= A.cols())
+                    continue;
+                for (int l = 0; l < length; ++l)
+                {
+                    int rdiff = l-radius;
+                    int rpos = r+rdiff;
+                    if (rpos < 0 || rpos >= A.rows())
+                        continue;
+                    if ((cdiff*cdiff+rdiff*rdiff) > radius*radius)
+                        continue;
+                    if (A(rpos, cpos) == 1)
+                    {
+                        match_flag = true;
+                        break;
+                    }
+                }
+            }
+            // Assign value according to match flag
+            B(r, c) = (match_flag) ? 1 : 0;
+        }
+    }
+
+    return B;
+}
+
+/**
+  Perform a morphological erosion of the input matrix.
+
+  Performs a morphological erosion of the input matrix using a circular
+  structuring element of given radius.
+
+  \param data the input matrix.
+  \param radius the radius of the circular structuring element.
+  \return the morphological erosion of the input matrix.
+*/
+template <typename Derived>
+PDAL_DLL Derived erode(const Eigen::MatrixBase<Derived>& A, int radius)
+{
+    Derived B = Derived::Constant(A.rows(), A.cols(), 1);
+
+    int length = 2 * radius + 1;
+    bool mismatch_flag;
+    for (int c = 0; c < A.cols(); ++c)
+    {
+        for (int r = 0; r < A.rows(); ++r)
+        {
+            if (A(r, c) == 0)
+            {
+                B(r, c) = 0;
+                continue;
+            }
+            mismatch_flag = false;
+            for (int k = 0; k < length; k++)
+            {
+                if (mismatch_flag)
+                    break;
+                int cdiff = k-radius;
+                int cpos = c+cdiff;
+                if (cpos < 0 || cpos >= A.cols())
+                    continue;
+                for (int l = 0; l < length; l++)
+                {
+                    int rdiff = l-radius;
+                    int rpos = r+rdiff;
+                    if (rpos < 0 || rpos >= A.rows())
+                        continue;
+                    if ((cdiff*cdiff+rdiff*rdiff) > radius*radius)
+                        continue;
+                    if (A(rpos, cpos) == 0)
+                    {
+                        B(r, c) = 0;
+                        mismatch_flag = true;
+                        break;
+                    }
+                }
+            }
+            // Assign value according to mismatch flag
+            B(r, c) = (mismatch_flag) ? 0 : 1;
+        }
+    }
+
+    return B;
+}
+
+/**
+  Thin Plate Spline interpolation.
+
+  \param x the x coordinate of the input data.
+  \param y the y coordinate of the input data.
+  \param z the z coordinate of the input data.
+  \param xx the x coordinate of the points to be interpolated.
+  \param yy the y coordinate of the points to be interpolated.
+  \return the values of the interpolated data at xx and yy.
+*/
+PDAL_DLL Eigen::MatrixXd computeSpline(Eigen::MatrixXd x, Eigen::MatrixXd y,
+                                       Eigen::MatrixXd z, Eigen::MatrixXd xx,
+                                       Eigen::MatrixXd yy);
+
+} // namespace eigen
+
 } // namespace pdal

@@ -274,6 +274,10 @@ bool PDAL_DLL isRemote(const std::string& path);
 bool PDAL_DLL fileExists(const std::string& path);
 std::vector<std::string> PDAL_DLL maybeGlob(const std::string& path);
 double PDAL_DLL computeHausdorff(PointViewPtr srcView, PointViewPtr candView);
+std::vector<PointId> extendedLocalMinimum(PointView& view, size_t rows,
+    size_t cols, double cell_size, BOX2D bounds);
+std::vector<PointId> localMinimum(PointView& view, std::vector<PointId> idx,
+    size_t rows, size_t cols, double cell_size, BOX2D bounds);
 
 } // namespace Utils
 } // namespace pdal
