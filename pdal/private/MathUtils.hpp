@@ -165,6 +165,41 @@ uint8_t computeRank(const PointView& view,
     const PointIdList& ids, double threshold);
 
 /**
+  Create matrix of maximum Z values.
+
+  Create a DSM from the provided PointVieew, where each cell contains the
+  maximum Z value of all contributing elevations.
+
+  \param view the input PointView.
+  \param rows the number of rows.
+  \param cols the number of columns.
+  \param cell_size the edge length of raster cell.
+  \param bounds the 2D bounds of the PointView.
+  \return the matrix of maximum Z values.
+*/
+PDAL_DLL Eigen::MatrixXd createMaxMatrix2(PointView& view, int rows, int cols,
+        double cell_size, BOX2D bounds);
+ 
+/**
+  Create matrix of minimum Z values.
+
+  Create a DTM from the provided PointVieew, where each cell contains the
+  minimum Z value of all contributing elevations.
+
+  \param view the input PointView.
+  \param rows the number of rows.
+  \param cols the number of columns.
+  \param cell_size the edge length of raster cell.
+  \param bounds the 2D bounds of the PointView.
+  \return the matrix of minimum Z values.
+*/       
+PDAL_DLL Eigen::MatrixXd createMinMatrix2(PointView& view, int rows, int cols,
+        double cell_size, BOX2D bounds);
+        
+PDAL_DLL Eigen::MatrixXd createMeanMatrix(PointView& view, int rows, int cols,
+        double cell_size, BOX2D bounds);
+
+/**
   Find local minimum elevations by extended local minimum.
 
   Extended local minimum can be used to select seed points for ground return
