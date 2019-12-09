@@ -109,6 +109,8 @@ set(PDAL_BUILD_TYPE ${CMAKE_BUILD_TYPE})
 #  Dependencies.
 #------------------------------------------------------------------------------
 
+find_package(Torch REQUIRED)
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${TORCH_CXX_FLAGS}")
 include(${PDAL_CMAKE_DIR}/gdal.cmake)
 include(${PDAL_CMAKE_DIR}/geotiff.cmake)  # Optional (not really)
 include(${PDAL_CMAKE_DIR}/lazperf.cmake)  # Optional
@@ -275,6 +277,7 @@ target_link_libraries(${PDAL_BASE_LIB_NAME}
         ${PDAL_UTIL_LIB_NAME}
         ${PDAL_ARBITER_LIB_NAME}
         ${PDAL_KAZHDAN_LIB_NAME}
+	${TORCH_LIBRARIES}
     INTERFACE
         ${PDAL_LIBDIR}
 )

@@ -37,6 +37,8 @@
 #include <pdal/util/Algorithm.hpp>
 #include <pdal/util/ProgramArgs.hpp>
 
+#include <torch/torch.h>
+
 namespace pdal
 {
 
@@ -129,6 +131,21 @@ bool FerryFilter::processOne(PointRef& point)
 
 void FerryFilter::filter(PointView& view)
 {
+    torch::manual_seed(1);
+
+    torch::DeviceType device_type;
+    if (torch::cuda::is_available()) {
+        log()->get(LogLevel::Debug) << "CUDA available! Training on GPU." << std::endl;
+        device_type = torch::kCUDA;
+    } else {
+        log()->get(LogLevel::Debug) << "Training on CPU." << std::endl;
+        device_type = torch::kCPU;
+    }
+    torch::Device device(device_type);
+
+    torch::Tensor tensor = torch::rand({2, 3});
+    log()->get(LogLevel::Debug) << tensor << std::endl;
+
     PointRef point(view, 0);
     for (PointId id = 0; id < view.size(); ++id)
     {
