@@ -328,6 +328,12 @@ PDAL_ADD_TEST(pdal_filters_splitter_test
     INCLUDES
         ${PDAL_VENDOR_DIR}/eigen)
 PDAL_ADD_TEST(pdal_filters_stats_test FILES filters/StatsFilterTest.cpp)
+PDAL_ADD_TEST(pdal_filters_teaser_test
+    FILES
+        filters/TeaserFilterTest.cpp
+    INCLUDES
+        ${PDAL_VENDOR_DIR}/eigen
+)
 PDAL_ADD_TEST(pdal_filters_transformation_test FILES
     filters/TransformationFilterTest.cpp)
 PDAL_ADD_TEST(pdal_filters_hexbin_test FILES filters/HexbinFilterTest.cpp)
