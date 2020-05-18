@@ -94,7 +94,7 @@ const double c_PI = std::acos(-1.0);
 class Node
 {
 public:
-    Node(PointViewPtr view, std::vector<PointId> ids)
+    Node(PointViewPtr view, PointIdList ids)
     {
         m_view = view;
         m_ids = ids;
@@ -142,7 +142,7 @@ public:
         // std::cerr << "Initializing node\n";
     }
 
-    std::vector<std::vector<PointId>> children()
+    std::vector<PointIdList> children()
     {
         double maxEdge = std::max(m_xEdge, std::max(m_yEdge, m_zEdge));
         double xSplit = maxEdge / 2 + m_bounds.minx;
@@ -154,12 +154,11 @@ public:
 
         // Create eight vectors of points indices for the eight children of the
         // current node.
-        std::vector<PointId> upNW, upNE, upSE, upSW, downNW, downNE, downSE,
-            downSW;
+        PointIdList upNW, upNE, upSE, upSW, downNW, downNE, downSE, downSW;
 
         // Populate the children, using original_ids as we may have removed
         // points from the ids vector during refinement.
-        for (auto const& i : m_originalIds)
+        for (PointId const& i : m_originalIds)
         {
             double x = m_view->getFieldAs<double>(Id::X, i);
             double y = m_view->getFieldAs<double>(Id::Y, i);
@@ -183,8 +182,8 @@ public:
                 downSW.push_back(i);
         }
 
-        std::vector<std::vector<PointId>> children{
-            upNW, upNE, upSE, upSW, downNW, downNE, downSE, downSW};
+        std::vector<PointIdList> children{upNW,   upNE,   upSE,   upSW,
+                                          downNW, downNE, downSE, downSW};
 
         return children;
     }
@@ -201,7 +200,7 @@ public:
         return m_eigenvalues;
     }
 
-    std::vector<PointId> indices()
+    PointIdList indices()
     {
         return m_ids;
     }
@@ -221,8 +220,8 @@ public:
 
         // Iterate over node indices and only keep those that are within a given
         // tolerance of the plane surface.
-        std::vector<PointId> new_ids;
-        for (auto const& j : m_ids)
+        PointIdList new_ids;
+        for (PointId const& j : m_ids)
         {
             PointRef p(m_view->point(j));
             Vector3d pt(p.getFieldAs<double>(Id::X),
@@ -261,7 +260,7 @@ private:
     Matrix3d m_covariance;
     Matrix<double, 3, 1, 0, 3, 1> m_eigenvalues;
     Matrix3d m_eigenvectors;
-    std::vector<PointId> m_ids, m_originalIds;
+    PointIdList m_ids, m_originalIds;
     Matrix<double, 3, 1, 0, 3, 1> m_normal;
     PointViewPtr m_view;
     double m_xEdge, m_yEdge, m_zEdge;
@@ -295,7 +294,7 @@ private:
 };
 } // namespace
 
-void KHTFilter::cluster(PointViewPtr view, std::vector<PointId> ids, int level)
+void KHTFilter::cluster(PointViewPtr view, PointIdList ids, int level)
 {
     using namespace Eigen;
 
@@ -306,7 +305,7 @@ void KHTFilter::cluster(PointViewPtr view, std::vector<PointId> ids, int level)
         return;
 
     bool coplanar(false);
-    std::vector<PointId> original_ids(ids);
+    PointIdList original_ids(ids);
 
     // log()->get(LogLevel::Debug) << "Cluster (" << ids.size() << ", " << level
     // << ")\n";
@@ -370,7 +369,7 @@ void KHTFilter::cluster(PointViewPtr view, std::vector<PointId> ids, int level)
             double rhoSum = 0.0;
             double thetaSum = 0.0;
             double phiSum = 0.0;
-            for (auto const& j : n.indices())
+            for (PointId const& j : n.indices())
             {
                 Vector3d pt(view->getFieldAs<double>(Id::X, j),
                             view->getFieldAs<double>(Id::Y, j),
@@ -385,7 +384,7 @@ void KHTFilter::cluster(PointViewPtr view, std::vector<PointId> ids, int level)
             Vector3d polarCentroid(rhoSum / n.size(), phiSum / n.size(),
                                    thetaSum / ids.size());
 
-            for (auto const& j : n.indices())
+            for (PointId const& j : n.indices())
             {
                 Vector3d pt(view->getFieldAs<double>(Id::X, j),
                             view->getFieldAs<double>(Id::Y, j),
@@ -423,7 +422,7 @@ void KHTFilter::cluster(PointViewPtr view, std::vector<PointId> ids, int level)
 
     // Loop over children and recursively cluster at the next level in the
     // octree.
-    for (auto const& child : n.children())
+    for (PointIdList const& child : n.children())
         cluster(view, child, level + 1);
 
     // if cluster is coplanar, cast votes, etc.
@@ -435,9 +434,9 @@ PointViewSet KHTFilter::run(PointViewPtr view)
 
     log()->get(LogLevel::Debug2) << "Process KHTFilter...\n";
 
-    std::vector<PointId> ids;
-    for (PointId i = 0; i < view->size(); ++i)
-        ids.push_back(i);
+    PointIdList ids;
+    for (PointRef p : *view)
+        ids.push_back(p.pointId());
 
     cluster(view, ids, 0);
 
