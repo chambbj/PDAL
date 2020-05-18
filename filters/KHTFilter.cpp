@@ -38,13 +38,13 @@
 
 #include <Eigen/Dense>
 
-#include <cmath>
-#include <vector>
+#include <numeric>
 
 namespace pdal
 {
 
 using namespace Dimension;
+using namespace Eigen;
 
 static PluginInfo const s_info{"filters.kht", "3D-KHT filter",
                                "http://pdal.io/stages/filters.kht.html"};
@@ -296,8 +296,6 @@ private:
 
 void KHTFilter::cluster(PointViewPtr view, PointIdList ids, int level)
 {
-    using namespace Eigen;
-
     // If there are too few points in the current node, then bail. We need a
     // minimum number of points to determine whether or not the points are
     // coplanar and if this cluster can be used for voting.
@@ -430,18 +428,20 @@ void KHTFilter::cluster(PointViewPtr view, PointIdList ids, int level)
 
 PointViewSet KHTFilter::run(PointViewPtr view)
 {
+    // Quick check that we have any points to process
     PointViewSet viewSet;
+    if (!view->size())
+        return viewSet;
 
-    log()->get(LogLevel::Debug2) << "Process KHTFilter...\n";
+    // Gather initial set of PointIds for the PointView
+    PointIdList ids(view->size());
+    std::iota(ids.begin(), ids.end(), 0);
 
-    PointIdList ids;
-    for (PointRef p : *view)
-        ids.push_back(p.pointId());
-
+    // Begin hierarchical clustering at level 0 using all PointIds
     cluster(view, ids, 0);
 
+    // Insert the clustered view and return
     viewSet.insert(view);
-
     return viewSet;
 }
 
