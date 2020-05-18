@@ -105,7 +105,7 @@ public:
         {
             // Create a temporary PointView for the current node.
             PointViewPtr node = m_view->makeNew();
-            for (auto const& i : m_ids)
+            for (PointId const& i : m_ids)
                 node->appendPoint(*m_view, i);
 
             node->calculateBounds(m_bounds);
@@ -216,7 +216,7 @@ public:
 
         // Create a plane with given normal (equal to eigenvector corresponding
         // to smallest eigenvalue) and passing through the centroid.
-        auto plane = Hyperplane<double, 3>(m_normal, 0);
+        Hyperplane<double, 3> plane = Hyperplane<double, 3>(m_normal, 0);
 
         // Iterate over node indices and only keep those that are within a given
         // tolerance of the plane surface.
@@ -281,8 +281,8 @@ private:
             rho2 = rho * rho;
             p = rho * m_normal;
         }
-        auto w = p.x() * p.x() + p.y() * p.y();
-        auto rootw = std::sqrt(w);
+        double w = p.x() * p.x() + p.y() * p.y();
+        double rootw = std::sqrt(w);
         Matrix3d J;
         J.row(0) << m_normal.x(), m_normal.y(), m_normal.z();
         J.row(1) << p.x() * p.z() / (rootw * rho2),
@@ -322,7 +322,7 @@ void KHTFilter::cluster(PointViewPtr view, PointIdList ids, int level)
     if (level > 3)
     {
         n.initialize();
-        auto eigVal = n.eigenvalues();
+        Vector3d eigVal = n.eigenvalues();
 
         // Test plane thickness and isotropy.
         if ((eigVal[1] > 25 * eigVal[0]) && (6 * eigVal[1] > eigVal[2]))
@@ -341,8 +341,8 @@ void KHTFilter::cluster(PointViewPtr view, PointIdList ids, int level)
             solver.compute(Sigma);
             if (solver.info() != Success)
                 throw pdal_error("Cannot perform eigen decomposition.");
-            auto stdev = std::sqrt(solver.eigenvalues()[0]);
-            auto gmin = 2 * stdev * solver.eigenvectors().col(0);
+            double stdev = std::sqrt(solver.eigenvalues()[0]);
+            MatrixXd gmin = 2 * stdev * solver.eigenvectors().col(0);
 
             Matrix3d SigmaInv;
             double SigmaDet;
@@ -358,11 +358,11 @@ void KHTFilter::cluster(PointViewPtr view, PointIdList ids, int level)
             // std::cerr << "Determinant: " << SigmaDet << std::endl;
             // std::cerr << "Inverse: " << SigmaInv << std::endl;
 
-            auto factor = 1 / (15.7496 * std::sqrt(SigmaDet));
+            double factor = 1 / (15.7496 * std::sqrt(SigmaDet));
             // std::cerr << "Factor: " << factor << std::endl;
 
-            auto weight = 0.75 * (n.area() / m_totalArea) +
-                          0.25 * (n.size() / m_totalPoints);
+            double weight = 0.75 * (n.area() / m_totalArea) +
+                            0.25 * (n.size() / m_totalPoints);
             // std::cerr << "Weight: " << weight << std::endl;
 
             // compute centroid of polar coordinates
@@ -375,8 +375,8 @@ void KHTFilter::cluster(PointViewPtr view, PointIdList ids, int level)
                             view->getFieldAs<double>(Id::Y, j),
                             view->getFieldAs<double>(Id::Z, j));
                 pt = pt - n.centroid();
-                auto rho = std::sqrt(pt.x() * pt.x() + pt.y() * pt.y() +
-                                     pt.z() * pt.z());
+                double rho = std::sqrt(pt.x() * pt.x() + pt.y() * pt.y() +
+                                       pt.z() * pt.z());
                 rhoSum += rho;
                 thetaSum += std::atan(pt.y() / pt.x());
                 phiSum += std::acos(pt.z() / rho);
@@ -390,15 +390,15 @@ void KHTFilter::cluster(PointViewPtr view, PointIdList ids, int level)
                             view->getFieldAs<double>(Id::Y, j),
                             view->getFieldAs<double>(Id::Z, j));
                 pt = pt - n.centroid();
-                auto rho = std::sqrt(pt.x() * pt.x() + pt.y() * pt.y() +
-                                     pt.z() * pt.z());
-                auto theta = std::atan(pt.y() / pt.x());
-                auto phi = std::acos(pt.z() / rho);
+                double rho = std::sqrt(pt.x() * pt.x() + pt.y() * pt.y() +
+                                       pt.z() * pt.z());
+                double theta = std::atan(pt.y() / pt.x());
+                double phi = std::acos(pt.z() / rho);
                 Vector3d q(rho, phi, theta);
                 q = q - polarCentroid;
-                auto temp = -0.5 * q.transpose() * SigmaInv * q;
-                auto temp2 = factor * std::exp(temp);
-                auto temp3 = weight * temp2;
+                double temp = -0.5 * q.transpose() * SigmaInv * q;
+                double temp2 = factor * std::exp(temp);
+                double temp3 = weight * temp2;
                 // std::cerr << q.transpose() << std::endl;
                 // std::cerr << std::exp(temp) << std::endl;
                 // printf("%f.8\n", temp3);
