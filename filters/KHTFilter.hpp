@@ -1,5 +1,5 @@
 /******************************************************************************
- * Copyright (c) 2019, Bradley J Chambers (brad.chambers@gmail.com)
+ * Copyright (c) 2020, Bradley J Chambers (brad.chambers@gmail.com)
  *
  * All rights reserved.
  *
@@ -44,9 +44,10 @@ const double c_PI = std::acos(-1.0);
 class PDAL_DLL KHTFilter : public Filter
 {
 public:
-    KHTFilter() : Filter()
-    {
-    }
+    KHTFilter();
+    ~KHTFilter();
+    KHTFilter& operator=(const KHTFilter&) = delete;
+    KHTFilter(const KHTFilter&) = delete;
 
     std::string getName() const;
 
@@ -57,9 +58,6 @@ private:
     virtual void addDimensions(PointLayoutPtr layout);
     void cluster(PointViewPtr view, std::vector<PointId> ids, int level);
     virtual PointViewSet run(PointViewPtr view);
-
-    KHTFilter& operator=(const KHTFilter&); // not implemented
-    KHTFilter(const KHTFilter&);            // not implemented
 };
 
 } // namespace pdal

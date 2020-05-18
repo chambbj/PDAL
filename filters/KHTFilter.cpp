@@ -1,5 +1,5 @@
 /******************************************************************************
- * Copyright (c) 2019, Bradley J Chambers (brad.chambers@gmail.com)
+ * Copyright (c) 2020, Bradley J Chambers (brad.chambers@gmail.com)
  *
  * All rights reserved.
  *
@@ -44,10 +44,16 @@
 namespace pdal
 {
 
+using namespace Dimension;
+
 static PluginInfo const s_info{"filters.kht", "3D-KHT filter",
                                "http://pdal.io/stages/filters.kht.html"};
 
 CREATE_STATIC_STAGE(KHTFilter, s_info)
+
+KHTFilter::KHTFilter() {}
+
+KHTFilter::~KHTFilter() {}
 
 std::string KHTFilter::getName() const
 {
@@ -56,7 +62,7 @@ std::string KHTFilter::getName() const
 
 void KHTFilter::addDimensions(PointLayoutPtr layout)
 {
-    layout->registerDim(Dimension::Id::Classification);
+    layout->registerDim(Id::Classification);
 }
 
 /*
@@ -155,9 +161,9 @@ public:
         // points from the ids vector during refinement.
         for (auto const& i : m_originalIds)
         {
-            double x = m_view->getFieldAs<double>(Dimension::Id::X, i);
-            double y = m_view->getFieldAs<double>(Dimension::Id::Y, i);
-            double z = m_view->getFieldAs<double>(Dimension::Id::Z, i);
+            double x = m_view->getFieldAs<double>(Id::X, i);
+            double y = m_view->getFieldAs<double>(Id::Y, i);
+            double z = m_view->getFieldAs<double>(Id::Z, i);
 
             if (x < xSplit && y >= ySplit && z >= zSplit)
                 upNW.push_back(i);
@@ -219,9 +225,9 @@ public:
         for (auto const& j : m_ids)
         {
             PointRef p(m_view->point(j));
-            Vector3d pt(p.getFieldAs<double>(Dimension::Id::X),
-                        p.getFieldAs<double>(Dimension::Id::Y),
-                        p.getFieldAs<double>(Dimension::Id::Z));
+            Vector3d pt(p.getFieldAs<double>(Id::X),
+                        p.getFieldAs<double>(Id::Y),
+                        p.getFieldAs<double>(Id::Z));
             // Vector3d pt = pointRefToVector3f(m_view->point(j));
             pt = pt - m_centroid;
             if (plane.absDistance(pt) < threshold)
@@ -287,11 +293,10 @@ private:
         return J;
     }
 };
-}
+} // namespace
 
 void KHTFilter::cluster(PointViewPtr view, std::vector<PointId> ids, int level)
 {
-    using namespace Dimension;
     using namespace Eigen;
 
     // If there are too few points in the current node, then bail. We need a
