@@ -86,7 +86,7 @@ Algorithm Summary
 
 void KHTFilter::foo()
 {
-	/*
+    /*
     PointIdList original_ids(ids);
             n.refineFit();
 
@@ -114,8 +114,10 @@ void KHTFilter::foo()
                 return;
             }
 
-            // log()->get(LogLevel::Debug) << "Determinant: " << SigmaDet << std::endl;
-            // log()->get(LogLevel::Debug) << "Inverse: " << SigmaInv << std::endl;
+            // log()->get(LogLevel::Debug) << "Determinant: " << SigmaDet <<
+    std::endl;
+            // log()->get(LogLevel::Debug) << "Inverse: " << SigmaInv <<
+    std::endl;
 
             double factor = 1 / (15.7496 * std::sqrt(SigmaDet));
             // log()->get(LogLevel::Debug) << "Factor: " << factor << std::endl;
@@ -176,10 +178,11 @@ void KHTFilter::foo()
                 << "Eigenvalues: " << eigVal.transpose() << "\t" << std::endl;
             // throw pdal_error("foo");
             return;
-	*/
+    */
 }
 
-void KHTFilter::cluster(PointViewPtr view, PointIdList ids, int level, std::deque<Node>& nodes)
+void KHTFilter::cluster(PointViewPtr view, PointIdList ids, int level,
+                        std::deque<Node>& nodes)
 {
     // If there are too few points in the current node, then bail. We need a
     // minimum number of points to determine whether or not the points are
@@ -203,18 +206,22 @@ void KHTFilter::cluster(PointViewPtr view, PointIdList ids, int level, std::dequ
     {
         n.initialize();
         Vector3d eigVal = n.eigenvalues();
-	
-	// right location?
-	nodes.push_back(n);
+
+        // right location?
+        nodes.push_back(n);
 
         // Test plane thickness and isotropy.
         if ((eigVal[1] > 25 * eigVal[0]) && (6 * eigVal[1] > eigVal[2]))
         {
             coplanar = true;
-            log()->get(LogLevel::Debug) << "Approx. coplanar node #" << nodes.size() << ": " << ids.size() << " points at level " << level << std::endl;
-	    return;
+            log()->get(LogLevel::Debug)
+                << "Approx. coplanar node #" << nodes.size() << ": "
+                << ids.size() << " points at level " << level << std::endl;
+            return;
         }
-        log()->get(LogLevel::Debug) << "Non-coplanar node #" << nodes.size() << ": " << ids.size() << " points at level " << level << std::endl;
+        log()->get(LogLevel::Debug)
+            << "Non-coplanar node #" << nodes.size() << ": " << ids.size()
+            << " points at level " << level << std::endl;
     }
 
     // Loop over children and recursively cluster at the next level in the
