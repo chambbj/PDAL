@@ -84,44 +84,15 @@ Algorithm Summary
 5. Detect peaks in accumulator
 */
 
-void KHTFilter::cluster(PointViewPtr view, PointIdList ids, int level, std::deque<Node>& nodes)
+void KHTFilter::foo()
 {
-    // If there are too few points in the current node, then bail. We need a
-    // minimum number of points to determine whether or not the points are
-    // coplanar and if this cluster can be used for voting.
-    if (ids.size() < 30)
-        return;
-
-    bool coplanar(false);
+	/*
     PointIdList original_ids(ids);
-
-    // log()->get(LogLevel::Debug) << "Cluster (" << ids.size() << ", " << level
-    // << ")\n";
-    Node n(view, ids);
-
-    if (level == 0)
-    {
-        m_totalArea = n.area();
-        m_totalPoints = n.size();
-    }
-
-    // Don't even begin looking for clusters of coplanar points until we reach a
-    // given level in the octree.
-    if (level > 3)
-    {
-        n.initialize();
-        Vector3d eigVal = n.eigenvalues();
-
-        // Test plane thickness and isotropy.
-        if ((eigVal[1] > 25 * eigVal[0]) && (6 * eigVal[1] > eigVal[2]))
-        {
-            coplanar = true;
-
             n.refineFit();
 
             Matrix3d Sigma = n.polarCovariance();
             Sigma(0, 0) += 0.001; // to avoid singular cases
-            // std::cerr << "Sigma: " << Sigma << std::endl;
+            // log()->get(LogLevel::Debug) << "Sigma: " << Sigma << std::endl;
 
             // Perform the eigen decomposition with the covariance in polar
             // coordinates.
@@ -139,19 +110,19 @@ void KHTFilter::cluster(PointViewPtr view, PointIdList ids, int level, std::dequ
 
             if (!invertible)
             {
-                std::cerr << "sigma is not invertible\n";
+                log()->get(LogLevel::Debug) << "sigma is not invertible\n";
                 return;
             }
 
-            // std::cerr << "Determinant: " << SigmaDet << std::endl;
-            // std::cerr << "Inverse: " << SigmaInv << std::endl;
+            // log()->get(LogLevel::Debug) << "Determinant: " << SigmaDet << std::endl;
+            // log()->get(LogLevel::Debug) << "Inverse: " << SigmaInv << std::endl;
 
             double factor = 1 / (15.7496 * std::sqrt(SigmaDet));
-            // std::cerr << "Factor: " << factor << std::endl;
+            // log()->get(LogLevel::Debug) << "Factor: " << factor << std::endl;
 
             double weight = 0.75 * (n.area() / m_totalArea) +
                             0.25 * (n.size() / m_totalPoints);
-            // std::cerr << "Weight: " << weight << std::endl;
+            // log()->get(LogLevel::Debug) << "Weight: " << weight << std::endl;
 
             // compute centroid of polar coordinates
             double rhoSum = 0.0;
@@ -187,14 +158,14 @@ void KHTFilter::cluster(PointViewPtr view, PointIdList ids, int level, std::dequ
                 double temp = -0.5 * q.transpose() * SigmaInv * q;
                 double temp2 = factor * std::exp(temp);
                 double temp3 = weight * temp2;
-                // std::cerr << q.transpose() << std::endl;
-                // std::cerr << std::exp(temp) << std::endl;
+                // log()->get(LogLevel::Debug) << q.transpose() << std::endl;
+                // log()->get(LogLevel::Debug) << std::exp(temp) << std::endl;
                 // printf("%f.8\n", temp3);
                 // printf("Bin %.2f %.2f %.2f gets a vote of %.8f\n",
                 // theta*180/c_PI, phi*180/c_PI, rho, temp3);
             }
 
-            // std::cerr << gmin << std::endl;
+            // log()->get(LogLevel::Debug) << gmin << std::endl;
 
             log()->get(LogLevel::Debug2)
                 << "Level: " << level << "\t"
@@ -205,7 +176,45 @@ void KHTFilter::cluster(PointViewPtr view, PointIdList ids, int level, std::dequ
                 << "Eigenvalues: " << eigVal.transpose() << "\t" << std::endl;
             // throw pdal_error("foo");
             return;
+	*/
+}
+
+void KHTFilter::cluster(PointViewPtr view, PointIdList ids, int level, std::deque<Node>& nodes)
+{
+    // If there are too few points in the current node, then bail. We need a
+    // minimum number of points to determine whether or not the points are
+    // coplanar and if this cluster can be used for voting.
+    if (ids.size() < 30)
+        return;
+
+    bool coplanar(false);
+
+    Node n(view, ids);
+
+    if (level == 0)
+    {
+        m_totalArea = n.area();
+        m_totalPoints = n.size();
+    }
+
+    // Don't even begin looking for clusters of coplanar points until we reach a
+    // given level in the octree.
+    if (level > 3)
+    {
+        n.initialize();
+        Vector3d eigVal = n.eigenvalues();
+	
+	// right location?
+	nodes.push_back(n);
+
+        // Test plane thickness and isotropy.
+        if ((eigVal[1] > 25 * eigVal[0]) && (6 * eigVal[1] > eigVal[2]))
+        {
+            coplanar = true;
+            log()->get(LogLevel::Debug) << "Approx. coplanar node #" << nodes.size() << ": " << ids.size() << " points at level " << level << std::endl;
+	    return;
         }
+        log()->get(LogLevel::Debug) << "Non-coplanar node #" << nodes.size() << ": " << ids.size() << " points at level " << level << std::endl;
     }
 
     // Loop over children and recursively cluster at the next level in the
@@ -213,7 +222,7 @@ void KHTFilter::cluster(PointViewPtr view, PointIdList ids, int level, std::dequ
     for (PointIdList const& child : n.children())
         cluster(view, child, level + 1, nodes);
 
-    // if cluster is coplanar, cast votes, etc.
+    return;
 }
 
 PointViewSet KHTFilter::run(PointViewPtr view)

@@ -75,7 +75,7 @@ public:
         m_xEdge = (m_bounds.maxx - m_bounds.minx);
         m_yEdge = (m_bounds.maxy - m_bounds.miny);
         m_zEdge = (m_bounds.maxz - m_bounds.minz);
-        std::cerr << m_bounds << std::endl;
+        //std::cerr << m_bounds << std::endl;
         // std::cerr << "Constructing node with " << m_xEdge << ", " << m_yEdge
         // << ", " << m_zEdge << std::endl;
     }
@@ -271,6 +271,7 @@ private:
 
     virtual void addDimensions(PointLayoutPtr layout);
     void cluster(PointViewPtr view, std::vector<PointId> ids, int level, std::deque<Node>& nodes);
+    void foo();
     virtual PointViewSet run(PointViewPtr view);
 };
 
