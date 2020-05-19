@@ -63,121 +63,100 @@ void KHTFilter::addDimensions(PointLayoutPtr layout)
     layout->registerDim(Id::Classification);
 }
 
-/*
-Algorithm Summary
+Vector3d KHTFilter::compute(PointViewPtr view, Node n)
+{
+    // Let K be a cluster of approximately coplanar samples stored in an octree
+    // node, with covariance matrix Sigma, and centroid mu
 
-1. Generate octree
-2. For each node
-  a. If ns < 30, return, node is not coplanar
-  b. If nl > 4, check for coplanar points
-    i. Compute covariance in XYZ
-    ii. Test eigenvalues for coplanarity
-    iii. Perform plane fitting and voting here?
-  c. Recursively check child nodes
-  d. If coplanar
-    0. Perform plane fitting here?
-    i. Transform into spherical coordinates
-    ii. Compute covariance in theta, phi, rho
-    iii. Vote and update accumulator
-3. Filter accumulator
-4. Sort accumulator
-5. Detect peaks in accumulator
-*/
+    // Compute the Jacobian and convert covariance in XYZ space to covariance in
+    // polar coordinates.
+    Matrix3d J = n.computeJacobian();
+    Matrix3d Sigma = J * n.xyzCovariance() * J.transpose();
+
+    // Add a small value to avoid zero variance
+    Sigma(0, 0) += 0.001;
+
+    log()->get(LogLevel::Debug) << "Sigma:\n" << Sigma << std::endl;
+
+    // Perform the eigen decomposition with the covariance in polar
+    // coordinates.
+    SelfAdjointEigenSolver<Matrix3d> solver;
+    solver.compute(Sigma);
+    if (solver.info() != Success)
+        throw pdal_error("Cannot perform eigen decomposition.");
+    double stdev = std::sqrt(solver.eigenvalues()[0]);
+    Vector3d gmin = 2 * stdev * solver.eigenvectors().col(0);
+
+    log()->get(LogLevel::Debug) << "gmin:\n" << gmin.transpose() << std::endl;
+
+    return gmin;
+}
 
 void KHTFilter::foo()
 {
     /*
-    PointIdList original_ids(ids);
-            n.refineFit();
+    Matrix3d SigmaInv;
 
-            Matrix3d Sigma = n.polarCovariance();
-            Sigma(0, 0) += 0.001; // to avoid singular cases
-            // log()->get(LogLevel::Debug) << "Sigma: " << Sigma << std::endl;
+    double SigmaDet;
+    bool invertible;
+    Sigma.computeInverseAndDetWithCheck(SigmaInv, SigmaDet, invertible);
 
-            // Perform the eigen decomposition with the covariance in polar
-            // coordinates.
-            SelfAdjointEigenSolver<Matrix3d> solver;
-            solver.compute(Sigma);
-            if (solver.info() != Success)
-                throw pdal_error("Cannot perform eigen decomposition.");
-            double stdev = std::sqrt(solver.eigenvalues()[0]);
-            MatrixXd gmin = 2 * stdev * solver.eigenvectors().col(0);
+    if (!invertible)
+    {
+        log()->get(LogLevel::Debug) << "sigma is not invertible\n";
+        return;
+    }
 
-            Matrix3d SigmaInv;
-            double SigmaDet;
-            bool invertible;
-            Sigma.computeInverseAndDetWithCheck(SigmaInv, SigmaDet, invertible);
+    log()->get(LogLevel::Debug) << "Determinant: " << SigmaDet << std::endl;
+    log()->get(LogLevel::Debug) << "Inverse:\n" << SigmaInv << std::endl;
 
-            if (!invertible)
-            {
-                log()->get(LogLevel::Debug) << "sigma is not invertible\n";
-                return;
-            }
+    double factor = 1 / (15.7496 * std::sqrt(SigmaDet));
+    log()->get(LogLevel::Debug) << "Factor: " << factor << std::endl;
 
-            // log()->get(LogLevel::Debug) << "Determinant: " << SigmaDet <<
-    std::endl;
-            // log()->get(LogLevel::Debug) << "Inverse: " << SigmaInv <<
-    std::endl;
+    double weight =
+        0.75 * (n.area() / m_totalArea) + 0.25 * (n.size() / m_totalPoints);
+    log()->get(LogLevel::Debug) << "Weight: " << weight << std::endl;
 
-            double factor = 1 / (15.7496 * std::sqrt(SigmaDet));
-            // log()->get(LogLevel::Debug) << "Factor: " << factor << std::endl;
+    // compute centroid of polar coordinates
+    double rhoSum = 0.0;
+    double thetaSum = 0.0;
+    double phiSum = 0.0;
+    for (PointId const& j : n.indices())
+    {
+        Vector3d pt(view->getFieldAs<double>(Id::X, j),
+                    view->getFieldAs<double>(Id::Y, j),
+                    view->getFieldAs<double>(Id::Z, j));
+        pt = pt - n.centroid();
+        double rho =
+            std::sqrt(pt.x() * pt.x() + pt.y() * pt.y() + pt.z() * pt.z());
+        rhoSum += rho;
+        thetaSum += std::atan(pt.y() / pt.x());
+        phiSum += std::acos(pt.z() / rho);
+    }
+    Vector3d polarCentroid(rhoSum / n.size(), phiSum / n.size(),
+                           thetaSum / n.size());
 
-            double weight = 0.75 * (n.area() / m_totalArea) +
-                            0.25 * (n.size() / m_totalPoints);
-            // log()->get(LogLevel::Debug) << "Weight: " << weight << std::endl;
-
-            // compute centroid of polar coordinates
-            double rhoSum = 0.0;
-            double thetaSum = 0.0;
-            double phiSum = 0.0;
-            for (PointId const& j : n.indices())
-            {
-                Vector3d pt(view->getFieldAs<double>(Id::X, j),
-                            view->getFieldAs<double>(Id::Y, j),
-                            view->getFieldAs<double>(Id::Z, j));
-                pt = pt - n.centroid();
-                double rho = std::sqrt(pt.x() * pt.x() + pt.y() * pt.y() +
-                                       pt.z() * pt.z());
-                rhoSum += rho;
-                thetaSum += std::atan(pt.y() / pt.x());
-                phiSum += std::acos(pt.z() / rho);
-            }
-            Vector3d polarCentroid(rhoSum / n.size(), phiSum / n.size(),
-                                   thetaSum / ids.size());
-
-            for (PointId const& j : n.indices())
-            {
-                Vector3d pt(view->getFieldAs<double>(Id::X, j),
-                            view->getFieldAs<double>(Id::Y, j),
-                            view->getFieldAs<double>(Id::Z, j));
-                pt = pt - n.centroid();
-                double rho = std::sqrt(pt.x() * pt.x() + pt.y() * pt.y() +
-                                       pt.z() * pt.z());
-                double theta = std::atan(pt.y() / pt.x());
-                double phi = std::acos(pt.z() / rho);
-                Vector3d q(rho, phi, theta);
-                q = q - polarCentroid;
-                double temp = -0.5 * q.transpose() * SigmaInv * q;
-                double temp2 = factor * std::exp(temp);
-                double temp3 = weight * temp2;
-                // log()->get(LogLevel::Debug) << q.transpose() << std::endl;
-                // log()->get(LogLevel::Debug) << std::exp(temp) << std::endl;
-                // printf("%f.8\n", temp3);
-                // printf("Bin %.2f %.2f %.2f gets a vote of %.8f\n",
-                // theta*180/c_PI, phi*180/c_PI, rho, temp3);
-            }
-
-            // log()->get(LogLevel::Debug) << gmin << std::endl;
-
-            log()->get(LogLevel::Debug2)
-                << "Level: " << level << "\t"
-                << "Points before: " << original_ids.size() << "\t"
-                << "Points after: " << n.size() << "\t"
-                << "Stdev: " << stdev << "\t"
-                << "Area: " << n.area() << "\t"
-                << "Eigenvalues: " << eigVal.transpose() << "\t" << std::endl;
-            // throw pdal_error("foo");
-            return;
+    for (PointId const& j : n.indices())
+    {
+        Vector3d pt(view->getFieldAs<double>(Id::X, j),
+                    view->getFieldAs<double>(Id::Y, j),
+                    view->getFieldAs<double>(Id::Z, j));
+        pt = pt - n.centroid();
+        double rho =
+            std::sqrt(pt.x() * pt.x() + pt.y() * pt.y() + pt.z() * pt.z());
+        double theta = std::atan(pt.y() / pt.x());
+        double phi = std::acos(pt.z() / rho);
+        Vector3d q(rho, phi, theta);
+        q = q - polarCentroid;
+        double temp = -0.5 * q.transpose() * SigmaInv * q;
+        double temp2 = factor * std::exp(temp);
+        double temp3 = weight * temp2;
+        // log()->get(LogLevel::Debug) << q.transpose() << std::endl;
+        // log()->get(LogLevel::Debug) << std::exp(temp) << std::endl;
+        // printf("%f.8\n", temp3);
+        // printf("Bin %.2f %.2f %.2f gets a vote of %.8f\n",
+        // theta*180/c_PI, phi*180/c_PI, rho, temp3);
+    }
     */
 }
 
@@ -189,8 +168,6 @@ void KHTFilter::cluster(PointViewPtr view, PointIdList ids, int level,
     // coplanar and if this cluster can be used for voting.
     if (ids.size() < 30)
         return;
-
-    bool coplanar(false);
 
     Node n(view, ids);
 
@@ -207,21 +184,17 @@ void KHTFilter::cluster(PointViewPtr view, PointIdList ids, int level,
         n.initialize();
         Vector3d eigVal = n.eigenvalues();
 
-        // right location?
-        nodes.push_back(n);
-
         // Test plane thickness and isotropy.
         if ((eigVal[1] > 25 * eigVal[0]) && (6 * eigVal[1] > eigVal[2]))
         {
-            coplanar = true;
+            n.m_coplanar = true;
+            n.refineFit();
+            nodes.push_back(n);
             log()->get(LogLevel::Debug)
                 << "Approx. coplanar node #" << nodes.size() << ": "
                 << ids.size() << " points at level " << level << std::endl;
             return;
         }
-        log()->get(LogLevel::Debug)
-            << "Non-coplanar node #" << nodes.size() << ": " << ids.size()
-            << " points at level " << level << std::endl;
     }
 
     // Loop over children and recursively cluster at the next level in the
@@ -246,6 +219,11 @@ PointViewSet KHTFilter::run(PointViewPtr view)
     // Begin hierarchical clustering at level 0 using all PointIds
     std::deque<Node> nodes;
     cluster(view, ids, 0, nodes);
+
+    for (Node n : nodes)
+    {
+        Vector3d gmin = compute(view, n);
+    }
 
     // Insert the clustered view and return
     viewSet.insert(view);

@@ -54,11 +54,14 @@ namespace
 class Node
 {
 public:
+    bool m_coplanar;
+
     Node(PointViewPtr view, PointIdList ids)
     {
         m_view = view;
         m_ids = ids;
         m_originalIds = m_ids;
+        m_coplanar = false;
 
         // Compute the bounds of the current node. (Scoped so that we will let
         // go of the PointViewPtr.)
@@ -172,6 +175,13 @@ public:
 
     void refineFit()
     {
+        // Once an octree cell is considered to contain an approximately
+        // coplanar sample cluster, least-squares is used for plane fitting
+        // after discarding samples at a distance bigger than Tau/10 from the
+        // plane passing by the centroid of the cluster and whose normal is
+        // given by the eigenvector with smallest eigenvalue of Sigma. Tau is
+        // the current octree-node edge length.
+
         double threshold = std::max(m_xEdge, std::max(m_yEdge, m_zEdge)) / 10;
 
         // Create a plane with given normal (equal to eigenvector corresponding
@@ -187,26 +197,18 @@ public:
             Vector3d pt(p.getFieldAs<double>(Id::X),
                         p.getFieldAs<double>(Id::Y),
                         p.getFieldAs<double>(Id::Z));
-            // Vector3d pt = pointRefToVector3f(m_view->point(j));
             pt = pt - m_centroid;
             if (plane.absDistance(pt) < threshold)
                 new_ids.push_back(j);
         }
-        // std::cerr << "Threshold computed as " << threshold << std::endl;
-        // if (new_ids.size() != m_ids.size())
-        //     std::cerr << "Eureka! " << new_ids.size() << " != " <<
-        //     m_ids.size() << std::endl;
         m_ids.swap(new_ids);
 
         initialize();
     }
 
-    // Compute the Jacobian and convert covariance in XYZ space to covariance in
-    // polar coordinates.
-    Matrix3d polarCovariance()
+    Matrix3d xyzCovariance()
     {
-        Matrix3d J = computeJacobian();
-        return J * m_covariance * J.transpose();
+        return m_covariance;
     }
 
     point_count_t size()
@@ -214,29 +216,17 @@ public:
         return m_ids.size();
     }
 
-private:
-    BOX3D m_bounds;
-    Vector3d m_centroid;
-    Matrix3d m_covariance;
-    Matrix<double, 3, 1, 0, 3, 1> m_eigenvalues;
-    Matrix3d m_eigenvectors;
-    PointIdList m_ids, m_originalIds;
-    Matrix<double, 3, 1, 0, 3, 1> m_normal;
-    PointViewPtr m_view;
-    double m_xEdge, m_yEdge, m_zEdge;
-
     Matrix3d computeJacobian()
     {
+        // if the angle between the normal and the centroid is bigger than 90,
+        // we reverse the normals(i.e., multiply it by -1)
         double rho = m_centroid.dot(m_normal);
         double rho2 = rho * rho;
         Vector3d p = rho * m_normal;
         double angle = std::acos(rho / (m_centroid.norm() * m_normal.norm()));
-        // std::cerr << "Angle is " << angle*180/c_PI << std::endl;
         if (angle * 180 / c_PI > 90)
         {
             m_normal *= -1;
-            // std::cerr << "Flipping normal to " << normal.transpose() <<
-            // std::endl;
             rho = m_centroid.dot(m_normal);
             rho2 = rho * rho;
             p = rho * m_normal;
@@ -251,6 +241,17 @@ private:
 
         return J;
     }
+
+private:
+    BOX3D m_bounds;
+    Vector3d m_centroid;
+    Matrix3d m_covariance;
+    Matrix<double, 3, 1, 0, 3, 1> m_eigenvalues;
+    Matrix3d m_eigenvectors;
+    PointIdList m_ids, m_originalIds;
+    Matrix<double, 3, 1, 0, 3, 1> m_normal;
+    PointViewPtr m_view;
+    double m_xEdge, m_yEdge, m_zEdge;
 };
 
 } // namespace
@@ -273,6 +274,7 @@ private:
     void cluster(PointViewPtr view, std::vector<PointId> ids, int level,
                  std::deque<Node>& nodes);
     void foo();
+    Vector3d compute(PointViewPtr view, Node n);
     virtual PointViewSet run(PointViewPtr view);
 };
 
