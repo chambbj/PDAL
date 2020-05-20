@@ -242,16 +242,117 @@ public:
         return J;
     }
 
+    void compute()
+    {
+        // Let K be a cluster of approximately coplanar samples stored in an
+        // octree node, with covariance matrix polarCov, and centroid mu
+
+        // Compute the Jacobian and convert covariance in XYZ space to
+        // covariance in polar coordinates.
+        m_Jacobian = computeJacobian();
+        m_polarCov = m_Jacobian * xyzCovariance() * m_Jacobian.transpose();
+
+        // Add a small value to avoid zero variance
+        m_polarCov(0, 0) += 0.001;
+
+        // log()->get(LogLevel::Debug) << "Sigma:\n" << m_polarCov << std::endl;
+
+        // Perform the eigen decomposition with the covariance in polar
+        // coordinates.
+        SelfAdjointEigenSolver<Matrix3d> solver;
+        solver.compute(m_polarCov);
+        if (solver.info() != Success)
+            throw pdal_error("Cannot perform eigen decomposition.");
+        double stdev = std::sqrt(solver.eigenvalues()[0]);
+        m_gmin = 2 * stdev * solver.eigenvectors().col(0);
+
+        // log()->get(LogLevel::Debug) << "gmin:\n"
+        //                            << m_gmin.transpose() << std::endl;
+    }
+
+    void vote(double totalArea, point_count_t totalPoints)
+    {
+        Matrix3d SigmaInv;
+
+        double SigmaDet;
+        bool invertible;
+        m_polarCov.computeInverseAndDetWithCheck(SigmaInv, SigmaDet,
+                                                 invertible);
+
+        if (!invertible)
+        {
+            // log()->get(LogLevel::Debug) << "sigma is not invertible\n";
+            return;
+        }
+
+        // log()->get(LogLevel::Debug) << "Determinant: " << SigmaDet <<
+        // std::endl; log()->get(LogLevel::Debug) << "Inverse:\n" << SigmaInv <<
+        // std::endl;
+
+        double factor = 1 / (15.7496 * std::sqrt(SigmaDet));
+        std::cerr << "Factor: " << factor << std::endl;
+
+        double weight =
+            0.75 * (area() / totalArea) + 0.25 * (size() / totalPoints);
+        std::cerr << "Weight: " << weight << std::endl;
+
+        /*
+        // compute centroid of polar coordinates
+        double rhoSum = 0.0;
+        double thetaSum = 0.0;
+        double phiSum = 0.0;
+        for (PointId const& j : indices())
+        {
+            Vector3d pt(m_view->getFieldAs<double>(Id::X, j),
+                        m_view->getFieldAs<double>(Id::Y, j),
+                        m_view->getFieldAs<double>(Id::Z, j));
+            pt = pt - centroid();
+            double rho =
+                std::sqrt(pt.x() * pt.x() + pt.y() * pt.y() + pt.z() * pt.z());
+            rhoSum += rho;
+            thetaSum += std::atan(pt.y() / pt.x());
+            phiSum += std::acos(pt.z() / rho);
+        }
+        Vector3d polarCentroid(rhoSum / size(), phiSum / size(),
+                               thetaSum / size());
+
+        for (PointId const& j : indices())
+        {
+            Vector3d pt(m_view->getFieldAs<double>(Id::X, j),
+                        m_view->getFieldAs<double>(Id::Y, j),
+                        m_view->getFieldAs<double>(Id::Z, j));
+            pt = pt - centroid();
+            double rho =
+                std::sqrt(pt.x() * pt.x() + pt.y() * pt.y() + pt.z() * pt.z());
+            double theta = std::atan(pt.y() / pt.x());
+            double phi = std::acos(pt.z() / rho);
+            Vector3d q(rho, phi, theta);
+            q = q - polarCentroid;
+            double temp = -0.5 * q.transpose() * SigmaInv * q;
+            double temp2 = factor * std::exp(temp);
+            double temp3 = weight * temp2;
+            // log()->get(LogLevel::Debug) << q.transpose() << std::endl;
+            // log()->get(LogLevel::Debug) << std::exp(temp) << std::endl;
+            // printf("%f.8\n", temp3);
+            // printf("Bin %.2f %.2f %.2f gets a vote of %.8f\n",
+            // theta*180/c_PI, phi*180/c_PI, rho, temp3);
+        }
+        */
+    }
+
 private:
     BOX3D m_bounds;
     Vector3d m_centroid;
     Matrix3d m_covariance;
+    Matrix3d m_Jacobian;
+    Matrix3d m_polarCov;
     Matrix<double, 3, 1, 0, 3, 1> m_eigenvalues;
     Matrix3d m_eigenvectors;
     PointIdList m_ids, m_originalIds;
     Matrix<double, 3, 1, 0, 3, 1> m_normal;
     PointViewPtr m_view;
     double m_xEdge, m_yEdge, m_zEdge;
+    Vector3d m_gmin;
 };
 
 } // namespace
@@ -273,8 +374,6 @@ private:
     virtual void addDimensions(PointLayoutPtr layout);
     void cluster(PointViewPtr view, std::vector<PointId> ids, int level,
                  std::deque<Node>& nodes);
-    void foo();
-    Vector3d compute(PointViewPtr view, Node n);
     virtual PointViewSet run(PointViewPtr view);
 };
 

@@ -63,103 +63,6 @@ void KHTFilter::addDimensions(PointLayoutPtr layout)
     layout->registerDim(Id::Classification);
 }
 
-Vector3d KHTFilter::compute(PointViewPtr view, Node n)
-{
-    // Let K be a cluster of approximately coplanar samples stored in an octree
-    // node, with covariance matrix Sigma, and centroid mu
-
-    // Compute the Jacobian and convert covariance in XYZ space to covariance in
-    // polar coordinates.
-    Matrix3d J = n.computeJacobian();
-    Matrix3d Sigma = J * n.xyzCovariance() * J.transpose();
-
-    // Add a small value to avoid zero variance
-    Sigma(0, 0) += 0.001;
-
-    log()->get(LogLevel::Debug) << "Sigma:\n" << Sigma << std::endl;
-
-    // Perform the eigen decomposition with the covariance in polar
-    // coordinates.
-    SelfAdjointEigenSolver<Matrix3d> solver;
-    solver.compute(Sigma);
-    if (solver.info() != Success)
-        throw pdal_error("Cannot perform eigen decomposition.");
-    double stdev = std::sqrt(solver.eigenvalues()[0]);
-    Vector3d gmin = 2 * stdev * solver.eigenvectors().col(0);
-
-    log()->get(LogLevel::Debug) << "gmin:\n" << gmin.transpose() << std::endl;
-
-    return gmin;
-}
-
-void KHTFilter::foo()
-{
-    /*
-    Matrix3d SigmaInv;
-
-    double SigmaDet;
-    bool invertible;
-    Sigma.computeInverseAndDetWithCheck(SigmaInv, SigmaDet, invertible);
-
-    if (!invertible)
-    {
-        log()->get(LogLevel::Debug) << "sigma is not invertible\n";
-        return;
-    }
-
-    log()->get(LogLevel::Debug) << "Determinant: " << SigmaDet << std::endl;
-    log()->get(LogLevel::Debug) << "Inverse:\n" << SigmaInv << std::endl;
-
-    double factor = 1 / (15.7496 * std::sqrt(SigmaDet));
-    log()->get(LogLevel::Debug) << "Factor: " << factor << std::endl;
-
-    double weight =
-        0.75 * (n.area() / m_totalArea) + 0.25 * (n.size() / m_totalPoints);
-    log()->get(LogLevel::Debug) << "Weight: " << weight << std::endl;
-
-    // compute centroid of polar coordinates
-    double rhoSum = 0.0;
-    double thetaSum = 0.0;
-    double phiSum = 0.0;
-    for (PointId const& j : n.indices())
-    {
-        Vector3d pt(view->getFieldAs<double>(Id::X, j),
-                    view->getFieldAs<double>(Id::Y, j),
-                    view->getFieldAs<double>(Id::Z, j));
-        pt = pt - n.centroid();
-        double rho =
-            std::sqrt(pt.x() * pt.x() + pt.y() * pt.y() + pt.z() * pt.z());
-        rhoSum += rho;
-        thetaSum += std::atan(pt.y() / pt.x());
-        phiSum += std::acos(pt.z() / rho);
-    }
-    Vector3d polarCentroid(rhoSum / n.size(), phiSum / n.size(),
-                           thetaSum / n.size());
-
-    for (PointId const& j : n.indices())
-    {
-        Vector3d pt(view->getFieldAs<double>(Id::X, j),
-                    view->getFieldAs<double>(Id::Y, j),
-                    view->getFieldAs<double>(Id::Z, j));
-        pt = pt - n.centroid();
-        double rho =
-            std::sqrt(pt.x() * pt.x() + pt.y() * pt.y() + pt.z() * pt.z());
-        double theta = std::atan(pt.y() / pt.x());
-        double phi = std::acos(pt.z() / rho);
-        Vector3d q(rho, phi, theta);
-        q = q - polarCentroid;
-        double temp = -0.5 * q.transpose() * SigmaInv * q;
-        double temp2 = factor * std::exp(temp);
-        double temp3 = weight * temp2;
-        // log()->get(LogLevel::Debug) << q.transpose() << std::endl;
-        // log()->get(LogLevel::Debug) << std::exp(temp) << std::endl;
-        // printf("%f.8\n", temp3);
-        // printf("Bin %.2f %.2f %.2f gets a vote of %.8f\n",
-        // theta*180/c_PI, phi*180/c_PI, rho, temp3);
-    }
-    */
-}
-
 void KHTFilter::cluster(PointViewPtr view, PointIdList ids, int level,
                         std::deque<Node>& nodes)
 {
@@ -170,12 +73,6 @@ void KHTFilter::cluster(PointViewPtr view, PointIdList ids, int level,
         return;
 
     Node n(view, ids);
-
-    if (level == 0)
-    {
-        m_totalArea = n.area();
-        m_totalPoints = n.size();
-    }
 
     // Don't even begin looking for clusters of coplanar points until we reach a
     // given level in the octree.
@@ -220,9 +117,22 @@ PointViewSet KHTFilter::run(PointViewPtr view)
     std::deque<Node> nodes;
     cluster(view, ids, 0, nodes);
 
+    m_totalArea = 0.0;
+    m_totalPoints = 0;
+
     for (Node n : nodes)
     {
-        Vector3d gmin = compute(view, n);
+        m_totalArea += n.area();
+        m_totalPoints += n.size();
+    }
+
+    log()->get(LogLevel::Debug)
+        << m_totalArea << ", " << m_totalPoints << std::endl;
+
+    for (Node n : nodes)
+    {
+        n.compute();
+        n.vote(m_totalArea, m_totalPoints);
     }
 
     // Insert the clustered view and return
