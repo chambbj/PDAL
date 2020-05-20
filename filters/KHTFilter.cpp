@@ -79,24 +79,18 @@ PointViewSet KHTFilter::run(PointViewPtr view)
 
     // Begin hierarchical clustering at level 0 using all PointIds
     std::deque<ClusterNode> nodes;
-    cluster(view, ids, 0, nodes);
+    double totalArea = 0.0;
+    point_count_t totalPoints = 0;
 
-    m_totalArea = 0.0;
-    m_totalPoints = 0;
-
-    for (ClusterNode n : nodes)
-    {
-        m_totalArea += n.area();
-        m_totalPoints += n.size();
-    }
+    cluster(view, ids, 0, nodes, totalArea, totalPoints);
 
     log()->get(LogLevel::Debug)
-        << m_totalArea << ", " << m_totalPoints << std::endl;
+        << totalArea << ", " << totalPoints << std::endl;
 
     for (ClusterNode n : nodes)
     {
         n.compute();
-        n.vote(m_totalArea, m_totalPoints);
+        n.vote(totalArea, totalPoints);
     }
 
     // Insert the clustered view and return

@@ -38,6 +38,7 @@ namespace pdal
 {
 
 void cluster(PointViewPtr view, std::vector<PointId> ids, int level,
-             std::deque<ClusterNode>& nodes);
+             std::deque<ClusterNode>& nodes, double& area,
+             point_count_t& points);
 
 } // namespace pdal

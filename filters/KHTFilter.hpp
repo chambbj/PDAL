@@ -50,9 +50,6 @@ public:
     std::string getName() const;
 
 private:
-    double m_totalArea;
-    point_count_t m_totalPoints;
-
     virtual void addDimensions(PointLayoutPtr layout);
     virtual PointViewSet run(PointViewPtr view);
 };

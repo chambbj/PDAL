@@ -38,7 +38,8 @@ namespace pdal
 {
 
 void cluster(PointViewPtr view, PointIdList ids, int level,
-             std::deque<ClusterNode>& nodes)
+             std::deque<ClusterNode>& nodes, double& area,
+             point_count_t& points)
 {
     // If there are too few points in the current node, then bail. We need a
     // minimum number of points to determine whether or not the points are
@@ -60,6 +61,8 @@ void cluster(PointViewPtr view, PointIdList ids, int level,
         {
             n.m_coplanar = true;
             n.refineFit();
+            area += n.area();
+            points += n.size();
             nodes.push_back(n);
             std::cerr << "Approx. coplanar node #" << nodes.size() << ": "
                       << ids.size() << " points at level " << level
@@ -71,7 +74,7 @@ void cluster(PointViewPtr view, PointIdList ids, int level,
     // Loop over children and recursively cluster at the next level in the
     // octree.
     for (PointIdList const& child : n.children())
-        cluster(view, child, level + 1, nodes);
+        cluster(view, child, level + 1, nodes, area, points);
 
     return;
 }
