@@ -88,10 +88,7 @@ PointViewSet KHTFilter::run(PointViewPtr view)
         << totalArea << ", " << totalPoints << std::endl;
 
     for (ClusterNode n : nodes)
-    {
-        n.compute();
         n.vote(totalArea, totalPoints);
-    }
 
     // Insert the clustered view and return
     viewSet.insert(view);

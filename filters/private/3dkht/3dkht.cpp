@@ -61,6 +61,7 @@ void cluster(PointViewPtr view, PointIdList ids, int level,
         {
             n.m_coplanar = true;
             n.refineFit();
+            n.compute();
             area += n.area();
             points += n.size();
             nodes.push_back(n);
