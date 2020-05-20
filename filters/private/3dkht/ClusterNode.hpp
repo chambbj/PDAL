@@ -34,31 +34,90 @@
 
 #pragma once
 
-#include <pdal/Filter.hpp>
+#include <Eigen/Dense>
 
-#include "private/3dkht/ClusterNode.hpp"
+#include <pdal/pdal_types.hpp>
+#include <pdal/Dimension.hpp>
+#include <pdal/PointView.hpp>
+
+#include <vector>
 
 namespace pdal
 {
 
-class PDAL_DLL KHTFilter : public Filter
+using namespace Eigen;
+
+class ClusterNode
 {
 public:
-    KHTFilter();
-    ~KHTFilter();
-    KHTFilter& operator=(const KHTFilter&) = delete;
-    KHTFilter(const KHTFilter&) = delete;
+    bool m_coplanar;
 
-    std::string getName() const;
+    ClusterNode(PointViewPtr view, PointIdList ids);
+
+    double area()
+    {
+        return m_xEdge * m_yEdge * m_zEdge;
+    }
+
+    // Initialize node by computing the centroid, covariance, and eigen
+    // decomposition of the node samples.
+    void initialize();
+
+    std::vector<PointIdList> children();
+
+    // Accessors
+
+    Vector3d centroid()
+    {
+        return m_centroid;
+    }
+
+    Matrix<double, 3, 1, 0, 3, 1> eigenvalues()
+    {
+        return m_eigenvalues;
+    }
+
+    PointIdList indices()
+    {
+        return m_ids;
+    }
+
+    Matrix<double, 3, 1, 0, 3, 1> normal()
+    {
+        return m_normal;
+    }
+
+    void refineFit();
+
+    Matrix3d xyzCovariance()
+    {
+        return m_covariance;
+    }
+
+    point_count_t size()
+    {
+        return m_ids.size();
+    }
+
+    Matrix3d computeJacobian();
+
+    void compute();
+
+    void vote(double totalArea, point_count_t totalPoints);
 
 private:
-    double m_totalArea;
-    point_count_t m_totalPoints;
-
-    virtual void addDimensions(PointLayoutPtr layout);
-    void cluster(PointViewPtr view, std::vector<PointId> ids, int level,
-                 std::deque<ClusterNode>& nodes);
-    virtual PointViewSet run(PointViewPtr view);
+    BOX3D m_bounds;
+    Vector3d m_centroid;
+    Matrix3d m_covariance;
+    Matrix3d m_Jacobian;
+    Matrix3d m_polarCov;
+    Matrix<double, 3, 1, 0, 3, 1> m_eigenvalues;
+    Matrix3d m_eigenvectors;
+    PointIdList m_ids, m_originalIds;
+    Matrix<double, 3, 1, 0, 3, 1> m_normal;
+    PointViewPtr m_view;
+    double m_xEdge, m_yEdge, m_zEdge;
+    Vector3d m_gmin;
 };
 
 } // namespace pdal

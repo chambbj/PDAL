@@ -34,6 +34,8 @@
 
 #include "KHTFilter.hpp"
 
+#include "private/3dkht/ClusterNode.hpp"
+
 #include <Eigen/Dense>
 
 #include <numeric>
@@ -64,7 +66,7 @@ void KHTFilter::addDimensions(PointLayoutPtr layout)
 }
 
 void KHTFilter::cluster(PointViewPtr view, PointIdList ids, int level,
-                        std::deque<Node>& nodes)
+                        std::deque<ClusterNode>& nodes)
 {
     // If there are too few points in the current node, then bail. We need a
     // minimum number of points to determine whether or not the points are
@@ -72,7 +74,7 @@ void KHTFilter::cluster(PointViewPtr view, PointIdList ids, int level,
     if (ids.size() < 30)
         return;
 
-    Node n(view, ids);
+    ClusterNode n(view, ids);
 
     // Don't even begin looking for clusters of coplanar points until we reach a
     // given level in the octree.
@@ -114,13 +116,13 @@ PointViewSet KHTFilter::run(PointViewPtr view)
     std::iota(ids.begin(), ids.end(), 0);
 
     // Begin hierarchical clustering at level 0 using all PointIds
-    std::deque<Node> nodes;
+    std::deque<ClusterNode> nodes;
     cluster(view, ids, 0, nodes);
 
     m_totalArea = 0.0;
     m_totalPoints = 0;
 
-    for (Node n : nodes)
+    for (ClusterNode n : nodes)
     {
         m_totalArea += n.area();
         m_totalPoints += n.size();
@@ -129,7 +131,7 @@ PointViewSet KHTFilter::run(PointViewPtr view)
     log()->get(LogLevel::Debug)
         << m_totalArea << ", " << m_totalPoints << std::endl;
 
-    for (Node n : nodes)
+    for (ClusterNode n : nodes)
     {
         n.compute();
         n.vote(m_totalArea, m_totalPoints);
