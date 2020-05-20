@@ -34,6 +34,7 @@
 
 #include "KHTFilter.hpp"
 
+#include "private/3dkht/3dkht.hpp"
 #include "private/3dkht/ClusterNode.hpp"
 
 #include <Eigen/Dense>
@@ -63,45 +64,6 @@ std::string KHTFilter::getName() const
 void KHTFilter::addDimensions(PointLayoutPtr layout)
 {
     layout->registerDim(Id::Classification);
-}
-
-void KHTFilter::cluster(PointViewPtr view, PointIdList ids, int level,
-                        std::deque<ClusterNode>& nodes)
-{
-    // If there are too few points in the current node, then bail. We need a
-    // minimum number of points to determine whether or not the points are
-    // coplanar and if this cluster can be used for voting.
-    if (ids.size() < 30)
-        return;
-
-    ClusterNode n(view, ids);
-
-    // Don't even begin looking for clusters of coplanar points until we reach a
-    // given level in the octree.
-    if (level > 3)
-    {
-        n.initialize();
-        Vector3d eigVal = n.eigenvalues();
-
-        // Test plane thickness and isotropy.
-        if ((eigVal[1] > 25 * eigVal[0]) && (6 * eigVal[1] > eigVal[2]))
-        {
-            n.m_coplanar = true;
-            n.refineFit();
-            nodes.push_back(n);
-            log()->get(LogLevel::Debug)
-                << "Approx. coplanar node #" << nodes.size() << ": "
-                << ids.size() << " points at level " << level << std::endl;
-            return;
-        }
-    }
-
-    // Loop over children and recursively cluster at the next level in the
-    // octree.
-    for (PointIdList const& child : n.children())
-        cluster(view, child, level + 1, nodes);
-
-    return;
 }
 
 PointViewSet KHTFilter::run(PointViewPtr view)

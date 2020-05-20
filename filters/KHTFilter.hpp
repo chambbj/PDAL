@@ -36,8 +36,6 @@
 
 #include <pdal/Filter.hpp>
 
-#include "private/3dkht/ClusterNode.hpp"
-
 namespace pdal
 {
 
@@ -56,8 +54,6 @@ private:
     point_count_t m_totalPoints;
 
     virtual void addDimensions(PointLayoutPtr layout);
-    void cluster(PointViewPtr view, std::vector<PointId> ids, int level,
-                 std::deque<ClusterNode>& nodes);
     virtual PointViewSet run(PointViewPtr view);
 };
 

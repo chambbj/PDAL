@@ -32,92 +32,12 @@
  * OF SUCH DAMAGE.
  ****************************************************************************/
 
-#pragma once
-
-#include <Eigen/Dense>
-
-#include <pdal/Dimension.hpp>
-#include <pdal/PointView.hpp>
-#include <pdal/pdal_types.hpp>
-
-#include <vector>
+#include "ClusterNode.hpp"
 
 namespace pdal
 {
 
-using namespace Eigen;
-
-class ClusterNode
-{
-public:
-    bool m_coplanar;
-
-    ClusterNode(PointViewPtr view, PointIdList ids);
-
-    double area()
-    {
-        return m_xEdge * m_yEdge * m_zEdge;
-    }
-
-    // Initialize node by computing the centroid, covariance, and eigen
-    // decomposition of the node samples.
-    void initialize();
-
-    std::vector<PointIdList> children();
-
-    // Accessors
-
-    Vector3d centroid()
-    {
-        return m_centroid;
-    }
-
-    Matrix<double, 3, 1, 0, 3, 1> eigenvalues()
-    {
-        return m_eigenvalues;
-    }
-
-    PointIdList indices()
-    {
-        return m_ids;
-    }
-
-    Matrix<double, 3, 1, 0, 3, 1> normal()
-    {
-        return m_normal;
-    }
-
-    void refineFit();
-
-    Matrix3d xyzCovariance()
-    {
-        return m_covariance;
-    }
-
-    point_count_t size()
-    {
-        return m_ids.size();
-    }
-
-    Matrix3d computeJacobian();
-
-    void compute();
-
-    void vote(double totalArea, point_count_t totalPoints);
-
-private:
-    BOX3D m_bounds;
-    Vector3d m_centroid;
-    Matrix3d m_covariance;
-    Matrix3d m_Jacobian;
-    Matrix3d m_polarCov;
-    Matrix<double, 3, 1, 0, 3, 1> m_eigenvalues;
-    Matrix3d m_eigenvectors;
-    PointIdList m_ids, m_originalIds;
-    Matrix<double, 3, 1, 0, 3, 1> m_normal;
-    PointViewPtr m_view;
-    double m_xEdge, m_yEdge, m_zEdge;
-    Vector3d m_gmin;
-};
+void cluster(PointViewPtr view, std::vector<PointId> ids, int level,
+             std::deque<ClusterNode>& nodes);
 
 } // namespace pdal

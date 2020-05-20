@@ -205,7 +205,7 @@ void ClusterNode::compute()
     // Add a small value to avoid zero variance
     m_polarCov(0, 0) += 0.001;
 
-    // log()->get(LogLevel::Debug) << "Sigma:\n" << m_polarCov << std::endl;
+    // std::cerr << "Sigma:\n" << m_polarCov << std::endl;
 
     // Perform the eigen decomposition with the covariance in polar
     // coordinates.
@@ -216,7 +216,7 @@ void ClusterNode::compute()
     double stdev = std::sqrt(solver.eigenvalues()[0]);
     m_gmin = 2 * stdev * solver.eigenvectors().col(0);
 
-    // log()->get(LogLevel::Debug) << "gmin:\n"
+    // std::cerr << "gmin:\n"
     //                            << m_gmin.transpose() << std::endl;
 }
 
@@ -230,12 +230,12 @@ void ClusterNode::vote(double totalArea, point_count_t totalPoints)
 
     if (!invertible)
     {
-        // log()->get(LogLevel::Debug) << "sigma is not invertible\n";
+        // std::cerr << "sigma is not invertible\n";
         return;
     }
 
-    // log()->get(LogLevel::Debug) << "Determinant: " << SigmaDet <<
-    // std::endl; log()->get(LogLevel::Debug) << "Inverse:\n" << SigmaInv <<
+    // std::cerr << "Determinant: " << SigmaDet <<
+    // std::endl; std::cerr << "Inverse:\n" << SigmaInv <<
     // std::endl;
 
     double factor = 1 / (15.7496 * std::sqrt(SigmaDet));
@@ -279,8 +279,8 @@ void ClusterNode::vote(double totalArea, point_count_t totalPoints)
         double temp = -0.5 * q.transpose() * SigmaInv * q;
         double temp2 = factor * std::exp(temp);
         double temp3 = weight * temp2;
-        // log()->get(LogLevel::Debug) << q.transpose() << std::endl;
-        // log()->get(LogLevel::Debug) << std::exp(temp) << std::endl;
+        // std::cerr << q.transpose() << std::endl;
+        // std::cerr << std::exp(temp) << std::endl;
         // printf("%f.8\n", temp3);
         // printf("Bin %.2f %.2f %.2f gets a vote of %.8f\n",
         // theta*180/c_PI, phi*180/c_PI, rho, temp3);

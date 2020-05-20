@@ -32,92 +32,48 @@
  * OF SUCH DAMAGE.
  ****************************************************************************/
 
-#pragma once
-
-#include <Eigen/Dense>
-
-#include <pdal/Dimension.hpp>
-#include <pdal/PointView.hpp>
-#include <pdal/pdal_types.hpp>
-
-#include <vector>
+#include "3dkht.hpp"
 
 namespace pdal
 {
 
-using namespace Eigen;
-
-class ClusterNode
+void cluster(PointViewPtr view, PointIdList ids, int level,
+             std::deque<ClusterNode>& nodes)
 {
-public:
-    bool m_coplanar;
+    // If there are too few points in the current node, then bail. We need a
+    // minimum number of points to determine whether or not the points are
+    // coplanar and if this cluster can be used for voting.
+    if (ids.size() < 30)
+        return;
 
-    ClusterNode(PointViewPtr view, PointIdList ids);
+    ClusterNode n(view, ids);
 
-    double area()
+    // Don't even begin looking for clusters of coplanar points until we reach a
+    // given level in the octree.
+    if (level > 3)
     {
-        return m_xEdge * m_yEdge * m_zEdge;
+        n.initialize();
+        Vector3d eigVal = n.eigenvalues();
+
+        // Test plane thickness and isotropy.
+        if ((eigVal[1] > 25 * eigVal[0]) && (6 * eigVal[1] > eigVal[2]))
+        {
+            n.m_coplanar = true;
+            n.refineFit();
+            nodes.push_back(n);
+            std::cerr << "Approx. coplanar node #" << nodes.size() << ": "
+                      << ids.size() << " points at level " << level
+                      << std::endl;
+            return;
+        }
     }
 
-    // Initialize node by computing the centroid, covariance, and eigen
-    // decomposition of the node samples.
-    void initialize();
+    // Loop over children and recursively cluster at the next level in the
+    // octree.
+    for (PointIdList const& child : n.children())
+        cluster(view, child, level + 1, nodes);
 
-    std::vector<PointIdList> children();
-
-    // Accessors
-
-    Vector3d centroid()
-    {
-        return m_centroid;
-    }
-
-    Matrix<double, 3, 1, 0, 3, 1> eigenvalues()
-    {
-        return m_eigenvalues;
-    }
-
-    PointIdList indices()
-    {
-        return m_ids;
-    }
-
-    Matrix<double, 3, 1, 0, 3, 1> normal()
-    {
-        return m_normal;
-    }
-
-    void refineFit();
-
-    Matrix3d xyzCovariance()
-    {
-        return m_covariance;
-    }
-
-    point_count_t size()
-    {
-        return m_ids.size();
-    }
-
-    Matrix3d computeJacobian();
-
-    void compute();
-
-    void vote(double totalArea, point_count_t totalPoints);
-
-private:
-    BOX3D m_bounds;
-    Vector3d m_centroid;
-    Matrix3d m_covariance;
-    Matrix3d m_Jacobian;
-    Matrix3d m_polarCov;
-    Matrix<double, 3, 1, 0, 3, 1> m_eigenvalues;
-    Matrix3d m_eigenvectors;
-    PointIdList m_ids, m_originalIds;
-    Matrix<double, 3, 1, 0, 3, 1> m_normal;
-    PointViewPtr m_view;
-    double m_xEdge, m_yEdge, m_zEdge;
-    Vector3d m_gmin;
-};
+    return;
+}
 
 } // namespace pdal
