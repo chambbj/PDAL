@@ -36,7 +36,6 @@
 
 #include <pdal/KDIndex.hpp>
 #include <pdal/util/Utils.hpp>
-#include <pdal/pdal_macros.hpp>
 #include <pdal/util/ProgramArgs.hpp>
 
 #include <random>
@@ -46,11 +45,13 @@
 namespace pdal
 {
 
-static PluginInfo const s_info =
-    PluginInfo("filters.poissondtm", "Poisson DTM sampling filter",
-               "http://pdal.io/stages/filters.poissondtm.html");
+static PluginInfo const s_info {
+	"filters.poissondtm",
+	"Poisson DTM sampling filter",
+        "http://pdal.io/stages/filters.poissondtm.html"
+};
 
-CREATE_STATIC_PLUGIN(1, 0, PoissonDTMFilter, Filter, s_info)
+CREATE_STATIC_STAGE(PoissonDTMFilter, s_info)
 
 std::string PoissonDTMFilter::getName() const
 {

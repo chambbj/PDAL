@@ -35,12 +35,8 @@
 #pragma once
 
 #include <pdal/Filter.hpp>
-#include <pdal/plugin.hpp>
 
 #include <string>
-
-extern "C" int32_t PoissonDTMFilter_ExitFunc();
-extern "C" PF_ExitFunc PoissonDTMFilter_InitPlugin();
 
 namespace pdal
 {
