@@ -73,9 +73,9 @@ void ElevationResidualAnalysisFilter::filter(PointView& view)
 {
     KD2Index& kdi = view.build2dIndex();
 
-    for (PointId i = 0; i < view.size(); ++i)
+    for (PointRef p : view)
     {
-        PointIdList neighbors = kdi.radius(i, std::sqrt(2.0));
+        PointIdList neighbors = kdi.radius(p, std::sqrt(2.0));
         double val(0.0);
         double maxZ(std::numeric_limits<double>::lowest());
         double minZ(std::numeric_limits<double>::max());
@@ -102,12 +102,12 @@ void ElevationResidualAnalysisFilter::filter(PointView& view)
         std /= (neighbors.size() - 1);
         double stdev(std::sqrt(std));
 
-        double z(view.getFieldAs<double>(Dimension::Id::Z, i));
-        view.setField(m_mean, i, val);
-        view.setField(m_diffmean, i, z - val);
-        view.setField(m_range, i, range);
-        view.setField(m_std, i, stdev);
-        view.setField(m_devmean, i, (z - val) / stdev);
+        double z(p.getFieldAs<double>(Dimension::Id::Z));
+        p.setField(m_mean, val);
+        p.setField(m_diffmean, z - val);
+        p.setField(m_range, range);
+        p.setField(m_std, stdev);
+        p.setField(m_devmean, (z - val) / stdev);
     }
 }
 
