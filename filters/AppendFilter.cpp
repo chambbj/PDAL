@@ -34,17 +34,18 @@
 
 #include "AppendFilter.hpp"
 
-#include <pdal/pdal_macros.hpp>
 #include <pdal/util/ProgramArgs.hpp>
 
 namespace pdal
 {
 
-static PluginInfo const s_info =
-    PluginInfo("filters.append", "Append dimensions.",
-               "http://pdal.io/stages/filters.append.html");
+static PluginInfo const s_info {
+	"filters.append",
+	"Append dimensions.",
+        "http://pdal.io/stages/filters.append.html"
+};
 
-CREATE_STATIC_PLUGIN(1, 0, AppendFilter, Filter, s_info)
+CREATE_STATIC_STAGE(AppendFilter, s_info)
 
 AppendFilter::AppendFilter()
 {}

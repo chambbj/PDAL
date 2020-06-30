@@ -36,15 +36,16 @@
 
 #include <pdal/PointView.hpp>
 #include <pdal/util/Utils.hpp>
-#include <pdal/pdal_macros.hpp>
 
 namespace pdal
 {
-static PluginInfo const s_info =
-    PluginInfo("writers.dimension", "Dimension writer",
-               "http://pdal.io/stages/writers.dimension.html");
+static PluginInfo const s_info {
+	"writers.dimension",
+	"Dimension writer",
+        "http://pdal.io/stages/writers.dimension.html"
+};
 
-CREATE_STATIC_PLUGIN(1, 0, DimensionWriter, Writer, s_info)
+CREATE_STATIC_STAGE(DimensionWriter, s_info)
 
 std::string DimensionWriter::getName() const
 {

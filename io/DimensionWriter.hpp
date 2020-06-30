@@ -35,14 +35,10 @@
 #pragma once
 
 #include <pdal/Writer.hpp>
-#include <pdal/plugin.hpp>
 #include <pdal/util/ProgramArgs.hpp>
 
 #include <string>
 #include <vector>
-
-extern "C" int32_t DimensionWriter_ExitFunc();
-extern "C" PF_ExitFunc DimensionWriter_InitPlugin();
 
 namespace pdal
 {
@@ -52,8 +48,6 @@ class BOX2D;
 class PDAL_DLL DimensionWriter : public Writer
 {
 public:
-    static void * create();
-    static int32_t destroy(void *);
     std::string getName() const;
 
     DimensionWriter()
