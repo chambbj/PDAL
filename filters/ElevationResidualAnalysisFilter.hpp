@@ -43,7 +43,7 @@ class PDAL_DLL ElevationResidualAnalysisFilter : public Filter
 {
 public:
     ElevationResidualAnalysisFilter();
-   
+
     ElevationResidualAnalysisFilter&
     operator=(const ElevationResidualAnalysisFilter&) = delete;
     ElevationResidualAnalysisFilter(const ElevationResidualAnalysisFilter&) =

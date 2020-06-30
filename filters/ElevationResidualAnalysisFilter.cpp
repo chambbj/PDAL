@@ -42,9 +42,12 @@
 namespace pdal
 {
 
-static PluginInfo const s_info{"filters.era",
-                               "ElevationResidualAnalysis Filter",
-                               "http://pdal.io/stages/filters.era.html"};
+static PluginInfo const s_info
+{
+    "filters.era",
+    "ElevationResidualAnalysis Filter",
+    "http://pdal.io/stages/filters.era.html"
+};
 
 CREATE_STATIC_STAGE(ElevationResidualAnalysisFilter, s_info)
 
@@ -53,9 +56,7 @@ std::string ElevationResidualAnalysisFilter::getName() const
     return s_info.name;
 }
 
-ElevationResidualAnalysisFilter::ElevationResidualAnalysisFilter() : Filter()
-{
-}
+ElevationResidualAnalysisFilter::ElevationResidualAnalysisFilter() : Filter() {}
 
 void ElevationResidualAnalysisFilter::addDimensions(PointLayoutPtr layout)
 {
