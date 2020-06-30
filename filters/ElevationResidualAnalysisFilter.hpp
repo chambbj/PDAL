@@ -53,8 +53,15 @@ public:
 
 private:
     Dimension::Id m_mean, m_diffmean, m_range, m_std, m_devmean;
+    int m_knn;
+    size_t m_stride;
+    double m_radius;
+    Arg* m_radiusArg;
+    int m_minK;
 
+    virtual void addArgs(ProgramArgs& args);
     virtual void addDimensions(PointLayoutPtr layout);
+    virtual void prepared(PointTableRef table);
     virtual void filter(PointView& view);
 };
 

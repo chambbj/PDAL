@@ -78,25 +78,28 @@ PointId KD2Index::neighbor(PointRef &point) const
     return (ids.size() ? ids[0] : 0);
 }
 
-PointIdList KD2Index::neighbors(double x, double y, point_count_t k) const
+PointIdList KD2Index::neighbors(double x, double y, point_count_t k,
+    size_t stride) const
 {
-    return m_impl->neighbors(x, y, k);
+    return m_impl->neighbors(x, y, k, stride);
 }
 
-PointIdList KD2Index::neighbors(PointId idx, point_count_t k) const
+PointIdList KD2Index::neighbors(PointId idx, point_count_t k,
+    size_t stride) const
 {
     double x = m_buf.getFieldAs<double>(Dimension::Id::X, idx);
     double y = m_buf.getFieldAs<double>(Dimension::Id::Y, idx);
 
-    return neighbors(x, y, k);
+    return neighbors(x, y, k, stride);
 }
 
-PointIdList KD2Index::neighbors(PointRef &point, point_count_t k) const
+PointIdList KD2Index::neighbors(PointRef &point, point_count_t k,
+    size_t stride) const
 {
     double x = point.getFieldAs<double>(Dimension::Id::X);
     double y = point.getFieldAs<double>(Dimension::Id::Y);
 
-    return neighbors(x, y, k);
+    return neighbors(x, y, k, stride);
 }
 
 void KD2Index::knnSearch(double x, double y, point_count_t k,

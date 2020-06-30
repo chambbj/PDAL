@@ -58,6 +58,16 @@ std::string ElevationResidualAnalysisFilter::getName() const
 
 ElevationResidualAnalysisFilter::ElevationResidualAnalysisFilter() : Filter() {}
 
+void ElevationResidualAnalysisFilter::addArgs(ProgramArgs& args)
+{
+    args.add("knn", "k-Nearest neighbors", m_knn, 10);
+    args.add("stride", "Compute features on strided neighbors", m_stride,
+             size_t(1));
+    m_radiusArg =
+        &args.add("radius", "Radius for nearest neighbor search", m_radius);
+    args.add("min_k", "Minimum number of neighbors in radius", m_minK, 3);
+}
+
 void ElevationResidualAnalysisFilter::addDimensions(PointLayoutPtr layout)
 {
     using namespace Dimension;
@@ -69,13 +79,44 @@ void ElevationResidualAnalysisFilter::addDimensions(PointLayoutPtr layout)
     m_devmean = layout->registerOrAssignDim("DevMeanElevation", Type::Double);
 }
 
+void ElevationResidualAnalysisFilter::prepared(PointTableRef table)
+{
+    if (m_radiusArg->set())
+    {
+        log()->get(LogLevel::Warning)
+            << "Radius has been set. Ignoring knn and stride values."
+            << std::endl;
+        if (m_radius <= 0.0)
+            log()->get(LogLevel::Error)
+                << "Radius must be greater than 0." << std::endl;
+    }
+    else
+    {
+        log()->get(LogLevel::Warning) << "No radius specified. Proceeding with "
+                                         "knn and stride, but ignoring min_k."
+                                      << std::endl;
+    }
+}
+
 void ElevationResidualAnalysisFilter::filter(PointView& view)
 {
     KD2Index& kdi = view.build2dIndex();
 
     for (PointRef p : view)
     {
-        PointIdList neighbors = kdi.radius(p, std::sqrt(2.0));
+        // find neighbors, either by radius or k nearest neighbors
+        PointIdList neighbors;
+        if (m_radiusArg->set())
+        {
+            neighbors = kdi.radius(p, m_radius);
+            if (neighbors.size() < (size_t)m_minK)
+                return;
+        }
+        else
+        {
+            neighbors = kdi.neighbors(p, m_knn + 1, m_stride);
+        }
+
         double val(0.0);
         double maxZ(std::numeric_limits<double>::lowest());
         double minZ(std::numeric_limits<double>::max());

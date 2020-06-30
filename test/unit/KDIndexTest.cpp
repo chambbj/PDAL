@@ -64,14 +64,14 @@ TEST(KDIndex, neighbors2D)
     KD2Index index(view);
     index.build();
 
-    EXPECT_EQ(index.neighbor(0, 0), 0u);
+    EXPECT_EQ(index.neighbor(0.0, 0.0), 0u);
     EXPECT_EQ(index.neighbor(1.1, 1.1), 1u);
     EXPECT_EQ(index.neighbor(3.3, 3.3), 2u);
     EXPECT_EQ(index.neighbor(6.1, 6.1), 3u);
-    EXPECT_EQ(index.neighbor(15, 15), 4u);
+    EXPECT_EQ(index.neighbor(15.0, 15.0), 4u);
 
     PointIdList ids;
-    ids = index.neighbors(0, 0, 5);
+    ids = index.neighbors(0.0, 0.0, 5);
     EXPECT_EQ(ids.size(), 5u);
     EXPECT_EQ(ids[0], 0u);
     EXPECT_EQ(ids[1], 1u);
@@ -79,7 +79,7 @@ TEST(KDIndex, neighbors2D)
     EXPECT_EQ(ids[3], 3u);
     EXPECT_EQ(ids[4], 4u);
 
-    ids = index.neighbors(0, 0, 25);
+    ids = index.neighbors(0.0, 0.0, 25);
     EXPECT_EQ(ids.size(), 5u);
     EXPECT_EQ(ids[0], 0u);
     EXPECT_EQ(ids[1], 1u);

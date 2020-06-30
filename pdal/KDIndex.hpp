@@ -53,9 +53,12 @@ public:
     PointId neighbor(double x, double y) const;
     PointId neighbor(PointId idx) const;
     PointId neighbor(PointRef &point) const;
-    PointIdList neighbors(double x, double y, point_count_t k) const;
-    PointIdList neighbors(PointId idx, point_count_t k) const;
-    PointIdList neighbors(PointRef &point, point_count_t k) const;
+    PointIdList neighbors(double x, double y, point_count_t k,
+        size_t stride=1) const;
+    PointIdList neighbors(PointId idx, point_count_t k,
+        size_t stride=1) const;
+    PointIdList neighbors(PointRef &point, point_count_t k,
+        size_t stride=1) const;
     void knnSearch(double x, double y, point_count_t k,
         PointIdList *indices, std::vector<double> *sqr_dists) const;
     void knnSearch(PointId idx, point_count_t k, PointIdList *indices,
