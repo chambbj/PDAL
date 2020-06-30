@@ -1,5 +1,5 @@
 /******************************************************************************
-* Copyright (c) 2015, Hobu Inc. (info@hobu.co)
+* Copyright (c) 2016, Bradley J Chambers (brad.chambers@gmail.com)
 *
 * All rights reserved.
 *
@@ -34,31 +34,46 @@
 
 #pragma once
 
-#include <pdal/Kernel.hpp>
-#include <pdal/plugin.hpp>
+#include <pdal/Filter.hpp>
 
-extern "C" int32_t CondensationKernel_ExitFunc();
-extern "C" PF_ExitFunc CondensationKernel_InitPlugin();
+#include <Eigen/Dense>
+
+#include <cstdint>
+#include <memory>
+#include <string>
 
 namespace pdal
 {
 
-class PDAL_DLL CondensationKernel : public Kernel
+class Options;
+class PointLayout;
+class PointView;
+
+class PDAL_DLL CondensationFilter : public Filter
 {
 public:
-    static void *create();
-    static int32_t destroy(void *);
+    CondensationFilter() : Filter()
+    {}
+
     std::string getName() const;
-    int execute();
 
 private:
-    void addSwitches(ProgramArgs& args);
-    void validateSwitches(ProgramArgs& args);
-
-    StringList m_files;
-    std::string m_outputFile;
+    Dimension::Id m_pixelNumber;
+    PointViewPtr m_view;
     double m_xmin, m_xmax, m_ymin, m_ymax, m_zmin, m_zmax;
     int m_nSamples;
+    Eigen::VectorXd m_samples, m_measurements;
+
+    virtual void addArgs(ProgramArgs& args);
+    virtual void addDimensions(PointLayoutPtr layout);
+    virtual void initialize();
+    virtual void ready(PointTableRef table);
+    Eigen::VectorXd computeDensity();
+    virtual bool processOne(PointRef& point);
+    virtual PointViewSet run(PointViewPtr in);
+
+    CondensationFilter& operator=(const CondensationFilter&); // not implemented
+    CondensationFilter(const CondensationFilter&); // not implemented
 };
 
 } // namespace pdal

@@ -34,19 +34,20 @@
 
 #include "CondensationKernel.hpp"
 
-#include <condensation/CondensationFilter.hpp>
+#include <filters/CondensationFilter.hpp>
 #include <pdal/StageFactory.hpp>
-#include <pdal/pdal_macros.hpp>
 
 namespace pdal
 {
 
-static PluginInfo const s_info = PluginInfo(
+static PluginInfo const s_info
+{
     "kernels.condensation",
     "Condensation Kernel",
-    "http://pdal.io/kernels/kernels.condensation.html" );
+    "http://pdal.io/kernels/kernels.condensation.html"
+};
 
-CREATE_STATIC_PLUGIN(1, 0, CondensationKernel, Kernel, s_info)
+CREATE_STATIC_STAGE(CondensationKernel, s_info)
 
 std::string CondensationKernel::getName() const
 {

@@ -35,7 +35,6 @@
 #include "CondensationFilter.hpp"
 
 #include <pdal/KDIndex.hpp>
-#include <pdal/pdal_macros.hpp>
 
 #include <Eigen/Dense>
 
@@ -46,11 +45,13 @@
 namespace pdal
 {
 
-static PluginInfo const s_info =
-    PluginInfo("filters.condensation", "Condensation Filter",
-               "http://pdal.io/stages/filters.condensation.html");
+static PluginInfo const s_info {
+	"filters.condensation",
+	"Condensation Filter",
+        "http://pdal.io/stages/filters.condensation.html"
+};
 
-CREATE_STATIC_PLUGIN(1, 0, CondensationFilter, Filter, s_info)
+CREATE_STATIC_STAGE(CondensationFilter, s_info)
 
 std::string CondensationFilter::getName() const
 {
