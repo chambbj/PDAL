@@ -279,8 +279,7 @@ Eigen::MatrixXd createMeanMatrix(PointView& view, int rows, int cols,
     using namespace Dimension;
     using namespace Eigen;
 
-    KD2Index kdi(view);
-    kdi.build();
+    KD2Index& kdi = view.build2dIndex();;
 
     MatrixXd ZImean(rows, cols);
     ZImean.setConstant(std::numeric_limits<double>::lowest());
