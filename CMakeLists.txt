@@ -140,6 +140,7 @@ include(${PDAL_CMAKE_DIR}/dimension.cmake)
 include(${PDAL_CMAKE_DIR}/arbiter.cmake)
 include(${PDAL_CMAKE_DIR}/nlohmann.cmake)
 include(${PDAL_CMAKE_DIR}/openssl.cmake) # Optional
+include(${PDAL_CMAKE_DIR}/teaserpp.cmake)
 
 #------------------------------------------------------------------------------
 # generate the pdal_features.hpp header
@@ -290,6 +291,8 @@ target_link_libraries(${PDAL_BASE_LIB_NAME}
         ${PDAL_UTIL_LIB_NAME}
         ${PDAL_ARBITER_LIB_NAME}
         ${PDAL_KAZHDAN_LIB_NAME}
+	teaserpp::teaser_registration
+	OpenMP::OpenMP_CXX
     INTERFACE
         ${PDAL_LIBDIR}
 )

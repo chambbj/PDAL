@@ -34,7 +34,7 @@
 
 #include "TeaserFilter.hpp"
 
-#include <pdal/EigenUtils.hpp>
+#include <pdal/private/MathUtils.hpp>
 #include <pdal/KDIndex.hpp>
 #include <pdal/util/Utils.hpp>
 
