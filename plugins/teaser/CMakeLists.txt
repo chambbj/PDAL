@@ -47,7 +47,6 @@ endif()
 PDAL_ADD_PLUGIN(filter_libname filter teaser
     FILES
         filters/TeaserFilter.cpp
-	filters/MathUtils.cpp
     LINK_WITH
         teaserpp::teaser_registration
 	teaserpp::teaser_features
@@ -56,3 +55,14 @@ PDAL_ADD_PLUGIN(filter_libname filter teaser
     INCLUDES
         ${CMAKE_CURRENT_LIST_DIR}
 )
+
+if (WITH_TESTS)
+    PDAL_ADD_TEST(pdal_filters_teaser_test
+        FILES
+            test/TeaserFilterTest.cpp
+        LINK_WITH
+            ${filter_libname}
+        INCLUDES
+            "${PDAL_VENDOR_DIR}/eigen"
+    )
+endif()

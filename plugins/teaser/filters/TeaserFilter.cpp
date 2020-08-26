@@ -34,9 +34,8 @@
 
 #include "TeaserFilter.hpp"
 
-#include "MathUtils.hpp"
-
 #include <pdal/KDIndex.hpp>
+#include <pdal/private/MathUtils.hpp>
 
 #include <Eigen/Dense>
 
@@ -153,27 +152,12 @@ Affine3d TeaserFilter::fpfh()
     solver.solve(src, dst, correspondences);
     auto solution = solver.getSolution();
 
-    std::cerr << solution.rotation << std::endl;
-    std::cerr << solution.translation << std::endl;
-
-    Affine3d A, B, C, D, E;
-    A.rotate(solution.rotation).translate(solution.translation);
-    B.translate(solution.translation).rotate(solution.rotation);
-    C.prerotate(solution.rotation).translate(solution.translation);
-    D.prerotate(solution.rotation).pretranslate(solution.translation);
-    E.matrix().block<3,3>(0,0) = solution.rotation;
-    E.matrix().block<3,1>(0,3) = m_scale * solution.translation;
-    std::cerr << A.matrix() << std::endl;
-    std::cerr << B.matrix() << std::endl;
-    std::cerr << C.matrix() << std::endl;
-    std::cerr << D.matrix() << std::endl;
-    std::cerr << E.matrix() << std::endl;
-
     // We will work with Eigen's Affine3d elsewhere, so go ahead and create
     // that based on the rotation and translation obtained from the solver.
-    Affine3d T = Affine3d::Identity();
-    //return T.rotate(solution.rotation).translate(solution.translation);
-    return E;
+    Affine3d T;
+    T.matrix().block<3, 3>(0, 0) = solution.rotation;
+    T.matrix().block<3, 1>(0, 3) = m_scale * solution.translation;
+    return T;
 }
 
 Affine3d TeaserFilter::nofpfh()
@@ -221,8 +205,10 @@ Affine3d TeaserFilter::nofpfh()
 
     // We will work with Eigen's Affine3d elsewhere, so go ahead and create
     // that based on the rotation and translation obtained from the solver.
-    Affine3d T = Affine3d::Identity();
-    return T.rotate(solution.rotation).translate(solution.translation);
+    Affine3d T;
+    T.matrix().block<3, 3>(0, 0) = solution.rotation;
+    T.matrix().block<3, 1>(0, 3) = m_scale * solution.translation;
+    return T;
 }
 
 void TeaserFilter::teaser()
