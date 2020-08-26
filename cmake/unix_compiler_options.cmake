@@ -1,6 +1,6 @@
 function(pdal_target_compile_settings target)
     if (NOT ${CMAKE_VERSION} VERSION_LESS 3.1)
-        set_property(TARGET ${target} PROPERTY CXX_STANDARD 11)
+        set_property(TARGET ${target} PROPERTY CXX_STANDARD 17)
         set_property(TARGET ${target} PROPERTY CXX_STANDARD_REQUIRED TRUE)
     else()
         set(PDAL_CXX_STANDARD "-std=c++11")
