@@ -65,6 +65,8 @@ Stage* newFilter()
 
 void checkPointsEqualReader(const PointViewSet& pointViewSet, double tolerance)
 {
+    using namespace Dimension;
+
     auto reader = newReader();
     PointTable table;
     reader->prepare(table);
@@ -78,12 +80,12 @@ void checkPointsEqualReader(const PointViewSet& pointViewSet, double tolerance)
 
     for (PointId i = 0; i < expected->size(); ++i)
     {
-        ASSERT_NEAR(expected->getFieldAs<double>(Dimension::Id::X, i),
-                    actual->getFieldAs<double>(Dimension::Id::X, i), tolerance);
-        ASSERT_NEAR(expected->getFieldAs<double>(Dimension::Id::Y, i),
-                    actual->getFieldAs<double>(Dimension::Id::Y, i), tolerance);
-        ASSERT_NEAR(expected->getFieldAs<double>(Dimension::Id::Z, i),
-                    actual->getFieldAs<double>(Dimension::Id::Z, i), tolerance);
+        ASSERT_NEAR(expected->getFieldAs<double>(Id::X, i),
+                    actual->getFieldAs<double>(Id::X, i), tolerance);
+        ASSERT_NEAR(expected->getFieldAs<double>(Id::Y, i),
+                    actual->getFieldAs<double>(Id::Y, i), tolerance);
+        ASSERT_NEAR(expected->getFieldAs<double>(Id::Z, i),
+                    actual->getFieldAs<double>(Id::Z, i), tolerance);
     }
 }
 } // namespace
