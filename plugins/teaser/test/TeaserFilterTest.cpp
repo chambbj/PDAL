@@ -44,6 +44,8 @@
 
 namespace pdal
 {
+using namespace Eigen;
+
 namespace
 {
 
@@ -107,8 +109,8 @@ TEST(TeaserFilterTest, DefaultIdentity)
     MetadataNode root = filter->getMetadata();
     MetadataNode transform = root.findChild("transform");
     EXPECT_EQ("string", transform.type());
-    Eigen::MatrixXd transformMatrix = transform.value<Eigen::MatrixXd>();
-    EXPECT_TRUE(transformMatrix.isApprox(Eigen::MatrixXd::Identity(4, 4), 1.0));
+    MatrixXd transformMatrix = transform.value<MatrixXd>();
+    EXPECT_TRUE(transformMatrix.isApprox(MatrixXd::Identity(4, 4), 1.0));
 }
 
 TEST(TeaserFilterTest, RecoverTranslation)
@@ -130,8 +132,7 @@ TEST(TeaserFilterTest, RecoverTranslation)
     PointViewSet pointViewSet = filter->execute(table);
 
     MetadataNode root = filter->getMetadata();
-    Eigen::MatrixXd transform =
-        root.findChild("transform").value<Eigen::MatrixXd>();
+    MatrixXd transform = root.findChild("transform").value<MatrixXd>();
     double tolerance = 1.5;
     EXPECT_NEAR(-1.0, transform(0, 3), tolerance);
     EXPECT_NEAR(-2.0, transform(1, 3), tolerance);
@@ -186,8 +187,7 @@ TEST(TeaserFilterTest, RecoverRotation)
     PointViewSet s = filter->execute(t);
 
     MetadataNode root = filter->getMetadata();
-    Eigen::MatrixXd transform =
-        root.findChild("transform").value<Eigen::MatrixXd>();
+    MatrixXd transform = root.findChild("transform").value<MatrixXd>();
     double mse = root.findChild("fitness").value<double>();
     double tolerance = 0.001;
     EXPECT_NEAR(mse, 0.005, tolerance);
@@ -198,6 +198,73 @@ TEST(TeaserFilterTest, RecoverRotation)
     EXPECT_NEAR(0.0, transform(0, 3), tolerance);
     EXPECT_NEAR(0.0, transform(1, 3), tolerance);
     EXPECT_NEAR(0.0, transform(2, 3), tolerance);
+}
+
+TEST(TeaserFilterTest, RecoverRandomRotation)
+{
+    StageFactory f;
+
+    Options rOpts;
+    rOpts.add("filename", Support::datapath("las/sample_c_thin.las"));
+
+    Stage* fixed(f.createStage("readers.las"));
+    fixed->setOptions(rOpts);
+
+    Stage* moving(f.createStage("readers.las"));
+    moving->setOptions(rOpts);
+
+    Options translate1Opts;
+    translate1Opts.add(
+        "matrix",
+        "1 0 0 -674568.4487 0 1 0 -1206773.638 0 0 1 -650.9486969 0 0 0 1");
+
+    Stage* translate1(f.createStage("filters.transformation"));
+    translate1->setInput(*moving);
+    translate1->setOptions(translate1Opts);
+
+    // Maybe random is not really what we want. It is nice that it always seems
+    // to work, but could there be a situation in which TEASER++ does fail? Or
+    // fails to fall below the threshold MSE?
+    Quaterniond q = Quaterniond::UnitRandom();
+    Affine3d T;
+    T.matrix().block<3, 3>(0, 0) = q.normalized().toRotationMatrix();
+    IOFormat MetadataFmt(FullPrecision, DontAlignCols, " ", " ", "", "", "",
+                         "");
+    std::stringstream ss;
+    ss << T.matrix().format(MetadataFmt);
+
+    Options rotateOpts;
+    rotateOpts.add("matrix", ss.str());
+    Stage* rotate(f.createStage("filters.transformation"));
+    rotate->setInput(*translate1);
+    rotate->setOptions(rotateOpts);
+
+    Options translate2Opts;
+    translate2Opts.add(
+        "matrix",
+        "1 0 0 674568.4487 0 1 0 1206773.638 0 0 1 650.9486969 0 0 0 1");
+
+    Stage* translate2(f.createStage("filters.transformation"));
+    translate2->setInput(*rotate);
+    translate2->setOptions(translate2Opts);
+
+    Stage* filter(f.createStage("filters.teaser"));
+    filter->setInput(*fixed);
+    filter->setInput(*translate2);
+
+    PointTable t;
+    filter->prepare(t);
+    PointViewSet s = filter->execute(t);
+
+    MetadataNode root = filter->getMetadata();
+    MatrixXd transform = root.findChild("transform").value<MatrixXd>();
+    double mse = root.findChild("fitness").value<double>();
+    EXPECT_LT(mse, 0.01);
+
+    double tolerance = 0.001;
+    for (size_t r = 0; r < 4; ++r)
+        for (size_t c = 0; c < 4; ++c)
+            EXPECT_NEAR(T.inverse()(r, c), transform(r, c), tolerance);
 }
 
 TEST(TeaserFilterTest, TooFewInputs)
