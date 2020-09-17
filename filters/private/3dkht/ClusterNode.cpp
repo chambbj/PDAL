@@ -34,7 +34,7 @@
 
 #include "ClusterNode.hpp"
 
-#include <pdal/EigenUtils.hpp>
+#include <pdal/private/MathUtils.hpp>
 
 namespace pdal
 {
@@ -76,8 +76,8 @@ ClusterNode::ClusterNode(PointViewPtr view, PointIdList ids)
 void ClusterNode::initialize()
 {
     // std::cerr << m_ids.size() << std::endl;
-    m_centroid = computeCentroid(*m_view, m_ids);
-    m_covariance = computeCovariance(*m_view, m_centroid, m_ids);
+    m_centroid = math::computeCentroid(*m_view, m_ids);
+    m_covariance = math::computeCovariance(*m_view, m_centroid, m_ids);
     SelfAdjointEigenSolver<Matrix3d> solver;
     solver.compute(m_covariance);
     if (solver.info() != Success)
