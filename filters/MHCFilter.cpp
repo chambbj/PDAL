@@ -35,8 +35,7 @@
 #include "MHCFilter.hpp"
 
 #include <pdal/KDIndex.hpp>
-#include <pdal/pdal_macros.hpp>
-#include <pdal/EigenUtils.hpp>
+#include <pdal/private/MathUtils.hpp>
 #include <pdal/PipelineManager.hpp>
 #include <pdal/SpatialReference.hpp>
 #include <io/BufferReader.hpp>
@@ -49,12 +48,13 @@
 namespace pdal
 {
 
-static PluginInfo const s_info =
-    PluginInfo("filters.mhc",
-        "Multiresolution Hierarchical Classification (Chen et al., 2013)",
-        "http://pdal.io/stages/filters.mhc.html");
+static StaticPluginInfo const s_info {
+    "filters.mhc",
+    "Multiresolution Hierarchical Classification (Chen et al., 2013)",
+    "http://pdal.io/stages/filters.mhc.html"
+};
 
-CREATE_STATIC_PLUGIN(1, 0, MHCFilter, Filter, s_info)
+CREATE_STATIC_STAGE(MHCFilter, s_info)
 
 std::string MHCFilter::getName() const
 {

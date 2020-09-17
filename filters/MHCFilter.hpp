@@ -35,15 +35,11 @@
 #pragma once
 
 #include <pdal/Filter.hpp>
-#include <pdal/plugin.hpp>
 
 #include <Eigen/Dense>
 
 #include <memory>
 #include <unordered_map>
-
-extern "C" int32_t MHCFilter_ExitFunc();
-extern "C" PF_ExitFunc MHCFilter_InitPlugin();
 
 namespace pdal
 {
@@ -57,8 +53,9 @@ public:
     MHCFilter() : Filter()
     {}
 
-    static void * create();
-    static int32_t destroy(void *);
+    MHCFilter& operator=(const MHCFilter&) = delete;
+    MHCFilter(const MHCFilter&) = delete;
+
     std::string getName() const;
 
 private:
@@ -76,9 +73,6 @@ private:
         PointViewPtr view, size_t rows, size_t cols, double res, BOX2D bounds, double tol);
     std::vector<PointId> processGround(PointViewPtr view);
     virtual PointViewSet run(PointViewPtr view);
-
-    MHCFilter& operator=(const MHCFilter&); // not implemented
-    MHCFilter(const MHCFilter&); // not implemented
 };
 
 } // namespace pdal

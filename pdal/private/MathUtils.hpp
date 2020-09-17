@@ -467,6 +467,8 @@ PDAL_DLL Eigen::MatrixXd computeSpline(Eigen::MatrixXd x, Eigen::MatrixXd y,
                                        Eigen::MatrixXd z, Eigen::MatrixXd xx,
                                        Eigen::MatrixXd yy);
 
-} // namespace eigen
+PDAL_DLL Eigen::MatrixXd matrixOpen(Eigen::MatrixXd data, int radius);
+PDAL_DLL Eigen::MatrixXd matrixClose(Eigen::MatrixXd data, int radius);
+PDAL_DLL Eigen::MatrixXd padMatrix(Eigen::MatrixXd data, int radius);
 
 } // namespace pdal
