@@ -41,13 +41,11 @@
 
 namespace pdal
 {
+using namespace Dimension;
 
-static PluginInfo const s_info
-{
-    "filters.era",
-    "ElevationResidualAnalysis Filter",
-    "http://pdal.io/stages/filters.era.html"
-};
+static StaticPluginInfo const s_info{"filters.era",
+                                     "ElevationResidualAnalysis Filter",
+                                     "http://pdal.io/stages/filters.era.html"};
 
 CREATE_STATIC_STAGE(ElevationResidualAnalysisFilter, s_info)
 
@@ -70,8 +68,6 @@ void ElevationResidualAnalysisFilter::addArgs(ProgramArgs& args)
 
 void ElevationResidualAnalysisFilter::addDimensions(PointLayoutPtr layout)
 {
-    using namespace Dimension;
-
     m_mean = layout->registerOrAssignDim("MeanElevation", Type::Double);
     m_diffmean = layout->registerOrAssignDim("DiffMeanElevation", Type::Double);
     m_range = layout->registerOrAssignDim("Range", Type::Double);
@@ -110,7 +106,7 @@ void ElevationResidualAnalysisFilter::filter(PointView& view)
         {
             neighbors = kdi.radius(p, m_radius);
             if (neighbors.size() < (size_t)m_minK)
-                return;
+                continue;
         }
         else
         {
@@ -123,7 +119,7 @@ void ElevationResidualAnalysisFilter::filter(PointView& view)
         for (PointId const& n : neighbors)
         {
             PointRef point = view.point(n);
-            double z(point.getFieldAs<double>(Dimension::Id::Z));
+            double z(point.getFieldAs<double>(Id::Z));
             val += z;
             if (z > maxZ)
                 maxZ = z;
@@ -137,13 +133,13 @@ void ElevationResidualAnalysisFilter::filter(PointView& view)
         for (PointId const& n : neighbors)
         {
             PointRef point = view.point(n);
-            double z(point.getFieldAs<double>(Dimension::Id::Z));
+            double z(point.getFieldAs<double>(Id::Z));
             std += (z - val) * (z - val);
         }
         std /= (neighbors.size() - 1);
         double stdev(std::sqrt(std));
 
-        double z(p.getFieldAs<double>(Dimension::Id::Z));
+        double z(p.getFieldAs<double>(Id::Z));
         p.setField(m_mean, val);
         p.setField(m_diffmean, z - val);
         p.setField(m_range, range);
