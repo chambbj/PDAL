@@ -46,8 +46,7 @@ class Options;
 class PDAL_DLL JartsFilter : public pdal::Filter
 {
 public:
-    JartsFilter() : Filter()
-    {}
+    JartsFilter() : Filter() {}
     JartsFilter& operator=(const JartsFilter&) = delete;
     JartsFilter(const JartsFilter&) = delete;
 

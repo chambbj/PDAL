@@ -43,13 +43,11 @@
 
 namespace pdal
 {
+using namespace Dimension;
 
-static StaticPluginInfo const s_info
-{
-    "filters.jarts",
-    "Jarts filter",
-    "http://pdal.io/stages/filters.jarts.html"
-};
+static StaticPluginInfo const s_info{
+    "filters.jarts", "Jarts filter",
+    "http://pdal.io/stages/filters.jarts.html"};
 
 CREATE_STATIC_STAGE(JartsFilter, s_info)
 
@@ -58,14 +56,12 @@ std::string JartsFilter::getName() const
     return s_info.name;
 }
 
-
 void JartsFilter::addArgs(ProgramArgs& args)
 {
     args.add("mr", "Masking radius", m_maskingRadius, 1.0);
     args.add("er", "Elevation radius", m_elevationRadius, 2.0);
     args.add("et", "Elevation threshold", m_elevationThreshold, 0.5);
 }
-
 
 PointViewSet JartsFilter::run(PointViewPtr inView)
 {
@@ -82,59 +78,40 @@ PointViewSet JartsFilter::run(PointViewPtr inView)
     KD2Index& index = inView->build2dIndex();
 
     // Find the minimum Z as a starting point for Jarts.
-    double minZ = std::numeric_limits<double>::max();
-    PointId idxZ;
-    for (PointId i = 0; i < np; ++i)
+    PointRef seed = inView->point(0);
+    for (PointRef p : *inView)
     {
-        double z = inView->getFieldAs<double>(Dimension::Id::Z, i);
-        if (z < minZ)
-        {
-            minZ = z;
-            idxZ = i;
-        }
+        if (p.getFieldAs<double>(Id::Z) < seed.getFieldAs<double>(Id::Z))
+            seed = p;
     }
-
-    auto master_ids = index.neighbors(idxZ, np);
-    log()->get(LogLevel::Debug) << idxZ << std::endl;
-    log()->get(LogLevel::Debug) << master_ids.size() << std::endl;
-    log()->get(LogLevel::Debug) << master_ids[0] << ", " << master_ids[1] << ", " << master_ids[2] << std::endl;
+    outView->appendPoint(*inView, seed.pointId());
 
     // All points are marked as kept (1) by default. As they are masked by
     // neighbors within the user-specified radius, their value is changed to 0.
     std::vector<int> keep(np, 1);
 
-    outView->appendPoint(*inView, idxZ);
-
-    // We now proceed to mask all neighbors within m_radius of the kept
+    // We now proceed to mask all neighbors within masking radius of the kept
     // point.
-    std::vector<PointId> ids;
+    PointIdList ids;
     ids.clear();
-    ids = index.radius(idxZ, m_maskingRadius);
-    log()->get(LogLevel::Debug) << ids.size() << std::endl;
-    for (auto const& id : ids)
+    ids = index.radius(seed, m_maskingRadius);
+    for (PointId const& id : ids)
         keep[id] = 0;
-    //keep[idxZ] = 1;
 
-    for (auto const& cur_idx : master_ids)
+    PointIdList master_ids = index.neighbors(seed, np);
+    for (PointId const& cur_idx : master_ids)
     {
         if (keep[cur_idx] == 0)
             continue;
 
-        // Find nearest point to idxZ that is outside the maskingRadius.
-        //auto neighbors = index.neighbors(cur_idx, ids.size()+1);
-        //PointId neighbor = neighbors.back();
+        PointIdList neighbor_ids = index.radius(cur_idx, m_elevationRadius);
 
-        auto neighbor_ids = index.radius(cur_idx, m_elevationRadius);
-//        log()->get(LogLevel::Debug) << neighbor_ids.size() << std::endl;
-        
         // Check that neighbor is the lowest in it's neighborhood.
-        double localMin = inView->getFieldAs<double>(Dimension::Id::Z, cur_idx);
+        double localMin = inView->getFieldAs<double>(Id::Z, cur_idx);
         bool isLocalMin(true);
-        for (auto const& ni : neighbor_ids)
+        for (PointId const& ni : neighbor_ids)
         {
-//            log()->get(LogLevel::Debug) << cur_idx << ", " << ni << std::endl;
-            double localZ = inView->getFieldAs<double>(Dimension::Id::Z, ni);
-//            log()->get(LogLevel::Debug) << localMin << ", " << localZ << std::endl;
+            double localZ = inView->getFieldAs<double>(Id::Z, ni);
             if ((localMin - localZ) > m_elevationThreshold)
             {
                 isLocalMin = false;
@@ -146,10 +123,8 @@ PointViewSet JartsFilter::run(PointViewPtr inView)
             outView->appendPoint(*inView, cur_idx);
             ids.clear();
             ids = index.radius(cur_idx, m_maskingRadius);
-//            log()->get(LogLevel::Debug) << ids.size() << std::endl;
-            for (auto const& id : ids)
+            for (PointId const& id : ids)
                 keep[id] = 0;
-            //keep[neighbor] = 1;
         }
     }
 
