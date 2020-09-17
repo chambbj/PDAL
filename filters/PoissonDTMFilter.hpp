@@ -46,13 +46,10 @@ class Options;
 class PDAL_DLL PoissonDTMFilter : public pdal::Filter
 {
 public:
-    PoissonDTMFilter() : Filter()
-    {}
+    PoissonDTMFilter() : Filter() {}
     PoissonDTMFilter& operator=(const PoissonDTMFilter&) = delete;
     PoissonDTMFilter(const PoissonDTMFilter&) = delete;
 
-    static void * create();
-    static int32_t destroy(void *);
     std::string getName() const;
 
 private:

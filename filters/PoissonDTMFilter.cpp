@@ -35,8 +35,8 @@
 #include "PoissonDTMFilter.hpp"
 
 #include <pdal/KDIndex.hpp>
-#include <pdal/util/Utils.hpp>
 #include <pdal/util/ProgramArgs.hpp>
+#include <pdal/util/Utils.hpp>
 
 #include <random>
 #include <string>
@@ -44,12 +44,11 @@
 
 namespace pdal
 {
+using namespace Dimension;
 
-static PluginInfo const s_info {
-	"filters.poissondtm",
-	"Poisson DTM sampling filter",
-        "http://pdal.io/stages/filters.poissondtm.html"
-};
+static PluginInfo const s_info{"filters.poissondtm",
+                               "Poisson DTM sampling filter",
+                               "http://pdal.io/stages/filters.poissondtm.html"};
 
 CREATE_STATIC_STAGE(PoissonDTMFilter, s_info)
 
@@ -58,18 +57,15 @@ std::string PoissonDTMFilter::getName() const
     return s_info.name;
 }
 
-
 void PoissonDTMFilter::addArgs(ProgramArgs& args)
 {
     args.add("radius", "Radius", m_radius, 1.0);
 }
 
-
 void PoissonDTMFilter::addDimensions(PointLayoutPtr layout)
 {
-    layout->registerDim(Dimension::Id::Classification);
+    layout->registerDim(Id::Classification);
 }
-
 
 PointViewSet PoissonDTMFilter::run(PointViewPtr inView)
 {
@@ -82,25 +78,26 @@ PointViewSet PoissonDTMFilter::run(PointViewPtr inView)
         return viewSet;
     PointViewPtr samples = inView->makeNew();
     PointViewPtr outView = inView->makeNew();
-    
+
     BOX2D bounds;
     inView->calculateBounds(bounds);
-    
-    std::random_device rd;  //Will be used to obtain a seed for the random number engine
-    std::mt19937 gen(rd()); //Standard mersenne_twister_engine seeded with rd()
+
+    std::random_device
+        rd; // Will be used to obtain a seed for the random number engine
+    std::mt19937 gen(rd()); // Standard mersenne_twister_engine seeded with rd()
     std::uniform_real_distribution<> xdis(bounds.minx, bounds.maxx);
     std::uniform_real_distribution<> ydis(bounds.miny, bounds.maxy);
-    
+
     for (PointId i = 0; i < np; ++i)
     {
-        samples->setField<double>(Dimension::Id::X, i, xdis(gen));
-        samples->setField<double>(Dimension::Id::Y, i, ydis(gen));
+        samples->setField<double>(Id::X, i, xdis(gen));
+        samples->setField<double>(Id::Y, i, ydis(gen));
     }
 
     // Build the 2D KD-tree.
     KD2Index index(*samples);
     index.build();
-    
+
     KD2Index kdi(*inView);
     kdi.build();
 
@@ -116,7 +113,7 @@ PointViewSet PoissonDTMFilter::run(PointViewPtr inView)
     std::vector<int> keep(np, 1);
 
     // We are able to subsample in a single pass over the shuffled indices.
-    for (auto const& i : indices)
+    for (PointId const& i : indices)
     {
         // If a point is masked, it is forever masked, and cannot be part of the
         // sampled cloud. Otherwise, the current index is appended to the output
@@ -127,17 +124,17 @@ PointViewSet PoissonDTMFilter::run(PointViewPtr inView)
 
         // We now proceed to mask all neighbors within m_radius of the kept
         // point.
-        auto ids = index.radius(i, m_radius);
+        PointIdList ids = index.radius(i, m_radius);
         for (PointId j = 1; j < ids.size(); ++j)
             keep[ids[j]] = 0;
     }
-    
-    for (PointId i = 0; i < outView->size(); ++i)
+
+    for (PointRef p : *outView)
     {
         // and go ahead and set Z at this point, now that we know we are keeping
         // it
-        double x = outView->getFieldAs<double>(Dimension::Id::X, i);
-        double y = outView->getFieldAs<double>(Dimension::Id::Y, i);
+        double x = p.getFieldAs<double>(Id::X);
+        double y = p.getFieldAs<double>(Id::Y);
         std::vector<PointId> neighbors(8);
         std::vector<double> sqr_dists(8);
         kdi.knnSearch(x, y, 8, &neighbors, &sqr_dists);
@@ -147,18 +144,17 @@ PointViewSet PoissonDTMFilter::run(PointViewPtr inView)
         {
             PointId n = neighbors[j];
             double dist = sqr_dists[j];
-            num += inView->getFieldAs<double>(Dimension::Id::Z, n) / dist;
+            num += inView->getFieldAs<double>(Id::Z, n) / dist;
             den += 1 / dist;
         }
-        outView->setField(Dimension::Id::Z, i, num/den);
+        p.setField(Id::Z, num / den);
     }
 
     // Simply calculate the percentage of retained points.
     double frac = (double)outView->size() / (double)inView->size();
-    log()->get(LogLevel::Debug2) << "Retaining "
-                                 << outView->size() << " of "
-                                 << inView->size() << " points ("
-                                 << 100*frac << "%)\n";
+    log()->get(LogLevel::Debug2)
+        << "Retaining " << outView->size() << " of " << inView->size()
+        << " points (" << 100 * frac << "%)\n";
 
     viewSet.insert(outView);
     return viewSet;
