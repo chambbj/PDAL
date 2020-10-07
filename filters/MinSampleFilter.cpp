@@ -35,6 +35,7 @@
 #include "MinSampleFilter.hpp"
 
 #include <pdal/KDIndex.hpp>
+#include <pdal/private/MathUtils.hpp>
 #include <pdal/util/ProgramArgs.hpp>
 
 #include <Eigen/Dense>
@@ -66,6 +67,10 @@ void MinSampleFilter::addArgs(ProgramArgs& args)
              "Points whose residual falls below the threshold are added to "
              "ground surface",
              m_thresh, 1.0);
+    args.add("radius_decay", "Decay rate of radius", m_radDecay, 0.5);
+    args.add("thresh_decay", "Decay rate of thresh", m_threshDecay, 0.5);
+    m_lambdaArg = &args.add("lambda", "Lambda for regularization", m_lambda);
+    args.add("lambda_decay", "Decay rate of lambda", m_lambdaDecay, 0.1);
 }
 
 void MinSampleFilter::addDimensions(PointLayoutPtr layout)
@@ -74,8 +79,7 @@ void MinSampleFilter::addDimensions(PointLayoutPtr layout)
 }
 
 PointViewPtr MinSampleFilter::maskNeighbors(PointView& view,
-                                            const KD2Index& index,
-                                            std::vector<int>& keep)
+                                            const KD2Index& index)
 {
     // Iterate through the view, marking selected points as ground and
     // masking neighbors within m_radius. These masked neighbors are marked
@@ -92,7 +96,8 @@ PointViewPtr MinSampleFilter::maskNeighbors(PointView& view,
         // If a point is masked, it is forever masked, and cannot be part of the
         // sampled ground surface. Otherwise, the current index is appended to
         // the output PointView.
-        if (keep[p.pointId()] == 0)
+        if (p.getFieldAs<uint8_t>(Id::Classification) ==
+            ClassLabel::Unclassified)
             continue;
 
         // Both classify the current point as ground and also add to the output
@@ -107,33 +112,48 @@ PointViewPtr MinSampleFilter::maskNeighbors(PointView& view,
         {
             if (j == p.pointId())
                 continue;
-            keep[j] = 0;
             view.setField(Id::Classification, j, ClassLabel::Unclassified);
         }
     }
 
-    //log()->get(LogLevel::Debug) << "At radius of " << m_radius << " kept "
-    //                            << std::accumulate(keep.begin(), keep.end(), 0)
-    //                            << " points for initial ground surface\n";
-    log()->get(LogLevel::Debug) << "Radius: " << m_radius
-	                        << ", thresh: " << m_thresh
-				<< ", kept: " << std::accumulate(keep.begin(), keep.end(), 0)
-				<< ", ground: " << gView->size()
-				<< ", total: " << view.size() << std::endl;
+    point_count_t numGround = 0;
+    point_count_t numUnclass = 0;
+    point_count_t numNeverClass = 0;
+    for (PointRef p : view)
+    {
+        uint8_t cls = p.getFieldAs<uint8_t>(Id::Classification);
+        if (cls == ClassLabel::Ground)
+            ++numGround;
+        else if (cls == ClassLabel::Unclassified)
+            ++numUnclass;
+        else if (cls == ClassLabel::CreatedNeverClassified)
+            ++numNeverClass;
+        else
+            log()->get(LogLevel::Error) << "Shouldn't happen\n";
+    }
+
+    log()->get(LogLevel::Debug)
+        << "Radius: " << m_radius << ", thresh: " << m_thresh
+        << ", lambda: " << m_lambda << ", ground: " << numGround
+        << ", unclass: " << numUnclass << ", never: " << numNeverClass
+        << ", total: " << view.size() << std::endl;
 
     return gView;
 }
 
 void MinSampleFilter::maskGroundNeighbors(PointView& view,
-                                          const KD2Index& index,
-                                          std::vector<int>& keep)
+                                          const KD2Index& index)
 {
-    point_count_t num = 0;
     for (PointRef p : view)
     {
-        if (p.getFieldAs<double>(Id::Classification) == ClassLabel::Ground)
+        if (p.getFieldAs<uint8_t>(Id::Classification) ==
+            ClassLabel::Unclassified)
+            p.setField(Id::Classification, ClassLabel::CreatedNeverClassified);
+    }
+    for (PointRef p : view)
+    {
+        if (p.getFieldAs<uint8_t>(Id::Classification) == ClassLabel::Ground)
         {
-            ++num;
             PointIdList ids = index.radius(p, m_radius);
 
             // We now proceed to mask all neighbors within m_radius of the kept
@@ -142,35 +162,51 @@ void MinSampleFilter::maskGroundNeighbors(PointView& view,
             {
                 if (j == p.pointId())
                     continue;
-                keep[j] = 0;
+                if (view.getFieldAs<uint8_t>(Id::Classification, j) ==
+                    ClassLabel::Ground)
+                    log()->get(LogLevel::Error) << "Shouldn't happen\n";
+                view.setField(Id::Classification, j, ClassLabel::Unclassified);
             }
         }
     }
 
-    //log()->get(LogLevel::Debug) << "At radius of " << m_radius << " there are "
-    //                            << std::accumulate(keep.begin(), keep.end(), 0)
-    //                            << " candidate ground points\n";
-    //log()->get(LogLevel::Debug)
-    //    << "This indicates that of the " << view.size()
-    //    << " points, the number masked by " << num << " ground returns is "
-    //    << view.size() - std::accumulate(keep.begin(), keep.end(), 0)
-    //    << std::endl;
+    point_count_t numGround = 0;
+    point_count_t numUnclass = 0;
+    point_count_t numNeverClass = 0;
+    for (PointRef p : view)
+    {
+        uint8_t cls = p.getFieldAs<uint8_t>(Id::Classification);
+        if (cls == ClassLabel::Ground)
+            ++numGround;
+        else if (cls == ClassLabel::Unclassified)
+            ++numUnclass;
+        else if (cls == ClassLabel::CreatedNeverClassified)
+            ++numNeverClass;
+        else
+            log()->get(LogLevel::Error) << "Shouldn't happen\n";
+    }
+
+    log()->get(LogLevel::Debug)
+        << "Radius: " << m_radius << ", thresh: " << m_thresh
+        << ", lambda: " << m_lambda << ", ground: " << numGround
+        << ", unclass: " << numUnclass << ", never: " << numNeverClass
+        << ", total: " << view.size() << std::endl;
 }
 
 void MinSampleFilter::densifyGround(PointView& view, PointViewPtr gView,
-                                    const KD2Index& index,
-                                    std::vector<int>& keep)
+                                    const KD2Index& index)
 {
     KD2Index& gIndex = gView->build2dIndex();
-    point_count_t numAdded = 0;
     for (PointRef p : view)
     {
-        if (keep[p.pointId()] == 0)
+        if (p.getFieldAs<uint8_t>(Id::Classification) !=
+            ClassLabel::CreatedNeverClassified)
             continue;
 
         auto CalcRbfValue = [](const VectorXd& xi, const VectorXd& xj) {
             double r = (xj - xi).norm();
             double value = r * r * std::log(r);
+            // std::cerr << "r: " << r << ", rbf: " << value << std::endl;
             return std::isnan(value) ? 0.0 : value;
         };
         PointIdList ids = gIndex.neighbors(p, m_count);
@@ -194,7 +230,20 @@ void MinSampleFilter::densifyGround(PointView& view, PointViewPtr gView,
                 Phi(i, j) = Phi(j, i) = value;
             }
         }
-        VectorXd w = Eigen::PartialPivLU<MatrixXd>(Phi).solve(y);
+        MatrixXd A = m_lambdaArg->set()
+                         ? Phi.transpose() * Phi +
+                               m_lambda * MatrixXd::Identity(m_count, m_count)
+                         : Phi;
+        VectorXd b = m_lambdaArg->set() ? Phi.transpose() * y : y;
+        VectorXd w = Eigen::PartialPivLU<MatrixXd>(A).solve(b);
+
+        // log()->get(LogLevel::Debug) << "X: " << X << std::endl << std::endl;
+        // log()->get(LogLevel::Debug) << "Phi: " << Phi << std::endl <<
+        // std::endl; log()->get(LogLevel::Debug) << "A: " << A << std::endl <<
+        // std::endl; log()->get(LogLevel::Debug) << "y: " << y << std::endl <<
+        // std::endl; log()->get(LogLevel::Debug) << "b: " << b << std::endl <<
+        // std::endl; log()->get(LogLevel::Debug) << "w: " << w << std::endl <<
+        // std::endl;
         double val(0.0);
         for (int i = 0; i < m_count; ++i)
         {
@@ -214,19 +263,32 @@ void MinSampleFilter::densifyGround(PointView& view, PointViewPtr gView,
             {
                 if (j == p.pointId())
                     continue;
-                keep[j] = 0;
+                view.setField(Id::Classification, j, ClassLabel::Unclassified);
             }
         }
     }
-    //log()->get(LogLevel::Debug)
-    //    << "Ground surface has " << std::accumulate(keep.begin(), keep.end(), 0)
-    //    << " points after densification with threshold " << m_thresh
-    //    << std::endl;
-    log()->get(LogLevel::Debug) << "Radius: " << m_radius
-	                        << ", thresh: " << m_thresh
-				<< ", kept: " << std::accumulate(keep.begin(), keep.end(), 0)
-				<< ", ground: " << gView->size()
-				<< ", total: " << view.size() << std::endl;
+
+    point_count_t numGround = 0;
+    point_count_t numUnclass = 0;
+    point_count_t numNeverClass = 0;
+    for (PointRef p : view)
+    {
+        uint8_t cls = p.getFieldAs<uint8_t>(Id::Classification);
+        if (cls == ClassLabel::Ground)
+            ++numGround;
+        else if (cls == ClassLabel::Unclassified)
+            ++numUnclass;
+        else if (cls == ClassLabel::CreatedNeverClassified)
+            ++numNeverClass;
+        else
+            log()->get(LogLevel::Error) << "Shouldn't happen\n";
+    }
+
+    log()->get(LogLevel::Debug)
+        << "Radius: " << m_radius << ", thresh: " << m_thresh
+        << ", lambda: " << m_lambda << ", ground: " << numGround
+        << ", unclass: " << numUnclass << ", never: " << numNeverClass
+        << ", total: " << view.size() << std::endl;
 }
 
 void MinSampleFilter::filter(PointView& inView)
@@ -245,22 +307,57 @@ void MinSampleFilter::filter(PointView& inView)
     };
     std::stable_sort(inView.begin(), inView.end(), cmp);
 
+    inView.calculateBounds(m_bounds);
+    double xrange = m_bounds.maxx - m_bounds.minx;
+    double yrange = m_bounds.maxy - m_bounds.miny;
+    double zrange = m_bounds.maxz - m_bounds.minz;
+    double maxrange = 2 * std::max(xrange, std::max(yrange, zrange));
+
+    m_radius /= maxrange;
+    m_thresh /= maxrange;
+
+    PointIdList ids(inView.size());
+    std::iota(ids.begin(), ids.end(), 0);
+    Vector3d centroid = math::computeCentroid(inView, ids);
+
+    for (PointRef p : inView)
+    {
+        double x = p.getFieldAs<double>(Id::X) - centroid.x();
+        double y = p.getFieldAs<double>(Id::Y) - centroid.y();
+        double z = p.getFieldAs<double>(Id::Z) - centroid.z();
+        p.setField(Id::X, x / maxrange);
+        p.setField(Id::Y, y / maxrange);
+        p.setField(Id::Z, z / maxrange);
+    }
+
     // Build the 2D KD-tree. Important that this comes after the sort!
     const KD2Index& index = inView.build2dIndex();
+
+    for (PointRef p : inView)
+        p.setField(Id::Classification, ClassLabel::CreatedNeverClassified);
 
     // All points are marked as kept (1) by default. As they are masked by
     // neighbors within the user-specified radius, their value is changed to 0.
     log()->get(LogLevel::Info) << "Finding seed points\n";
-    std::vector<int> keep(inView.size(), 1);
-    PointViewPtr gView = maskNeighbors(inView, index, keep);
+    PointViewPtr gView = maskNeighbors(inView, index);
 
     for (int iter = 0; iter < m_maxiters; ++iter)
     {
-        keep.assign(inView.size(), 1);
-        m_radius *= 0.5;
-        m_thresh *= 0.9;
-        maskGroundNeighbors(inView, index, keep);
-        densifyGround(inView, gView, index, keep);
+        m_radius *= m_radDecay;
+        maskGroundNeighbors(inView, index);
+        densifyGround(inView, gView, index);
+        m_thresh *= m_threshDecay;
+        m_lambda *= m_lambdaDecay;
+    }
+
+    for (PointRef p : inView)
+    {
+        double x = p.getFieldAs<double>(Id::X) * maxrange;
+        double y = p.getFieldAs<double>(Id::Y) * maxrange;
+        double z = p.getFieldAs<double>(Id::Z) * maxrange;
+        p.setField(Id::X, x + centroid.x());
+        p.setField(Id::Y, y + centroid.y());
+        p.setField(Id::Z, z + centroid.z());
     }
 }
 

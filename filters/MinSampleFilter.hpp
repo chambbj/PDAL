@@ -57,17 +57,21 @@ private:
     int m_count;
     int m_maxiters;
     double m_thresh;
+    double m_radDecay;
+    double m_threshDecay;
+    double m_lambda;
+    double m_lambdaDecay;
+    Arg* m_lambdaArg;
+    BOX3D m_bounds;
 
     virtual void addArgs(ProgramArgs& args);
     virtual void addDimensions(PointLayoutPtr layout);
     virtual void filter(PointView& view);
 
-    PointViewPtr maskNeighbors(PointView& view, const KD2Index& index,
-                               std::vector<int>& keep);
-    void maskGroundNeighbors(PointView& view, const KD2Index& index,
-                             std::vector<int>& keep);
+    PointViewPtr maskNeighbors(PointView& view, const KD2Index& index);
+    void maskGroundNeighbors(PointView& view, const KD2Index& index);
     void densifyGround(PointView& view, PointViewPtr gView,
-                       const KD2Index& index, std::vector<int>& keep);
+                       const KD2Index& index);
 };
 
 } // namespace pdal
