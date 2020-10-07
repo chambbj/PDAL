@@ -62,6 +62,10 @@ void MinSampleFilter::addArgs(ProgramArgs& args)
     args.add("radius", "Radius", m_radius, 1.0);
     args.add("count", "Count", m_count, 10);
     args.add("max_iters", "Maximum number of iterations", m_maxiters, 4);
+    args.add("thresh",
+             "Points whose residual falls below the threshold are added to "
+             "ground surface",
+             m_thresh, 1.0);
 }
 
 void MinSampleFilter::addDimensions(PointLayoutPtr layout)
@@ -108,9 +112,14 @@ PointViewPtr MinSampleFilter::maskNeighbors(PointView& view,
         }
     }
 
-    log()->get(LogLevel::Debug) << "At radius of " << m_radius << " kept "
-                                << std::accumulate(keep.begin(), keep.end(), 0)
-                                << " points for initial ground surface\n";
+    //log()->get(LogLevel::Debug) << "At radius of " << m_radius << " kept "
+    //                            << std::accumulate(keep.begin(), keep.end(), 0)
+    //                            << " points for initial ground surface\n";
+    log()->get(LogLevel::Debug) << "Radius: " << m_radius
+	                        << ", thresh: " << m_thresh
+				<< ", kept: " << std::accumulate(keep.begin(), keep.end(), 0)
+				<< ", ground: " << gView->size()
+				<< ", total: " << view.size() << std::endl;
 
     return gView;
 }
@@ -119,10 +128,12 @@ void MinSampleFilter::maskGroundNeighbors(PointView& view,
                                           const KD2Index& index,
                                           std::vector<int>& keep)
 {
+    point_count_t num = 0;
     for (PointRef p : view)
     {
         if (p.getFieldAs<double>(Id::Classification) == ClassLabel::Ground)
         {
+            ++num;
             PointIdList ids = index.radius(p, m_radius);
 
             // We now proceed to mask all neighbors within m_radius of the kept
@@ -136,9 +147,14 @@ void MinSampleFilter::maskGroundNeighbors(PointView& view,
         }
     }
 
-    log()->get(LogLevel::Debug) << "At radius of " << m_radius << " there are "
-                                << std::accumulate(keep.begin(), keep.end(), 0)
-                                << " candidate ground points\n";
+    //log()->get(LogLevel::Debug) << "At radius of " << m_radius << " there are "
+    //                            << std::accumulate(keep.begin(), keep.end(), 0)
+    //                            << " candidate ground points\n";
+    //log()->get(LogLevel::Debug)
+    //    << "This indicates that of the " << view.size()
+    //    << " points, the number masked by " << num << " ground returns is "
+    //    << view.size() - std::accumulate(keep.begin(), keep.end(), 0)
+    //    << std::endl;
 }
 
 void MinSampleFilter::densifyGround(PointView& view, PointViewPtr gView,
@@ -185,16 +201,16 @@ void MinSampleFilter::densifyGround(PointView& view, PointViewPtr gView,
             val += w(i) * CalcRbfValue(x, X.col(i));
         }
         double residual = p.getFieldAs<double>(Id::Z) - val;
-        if (residual < 1.0)
+        if (residual < m_thresh)
         {
-            PointIdList ids4 = index.radius(p, m_radius);
+            PointIdList ids = index.radius(p, m_radius);
 
             p.setField(Id::Classification, ClassLabel::Ground);
             gView->appendPoint(view, p.pointId());
 
             // We now proceed to mask all neighbors within m_radius of the kept
             // point.
-            for (PointId const& j : ids4)
+            for (PointId const& j : ids)
             {
                 if (j == p.pointId())
                     continue;
@@ -202,9 +218,15 @@ void MinSampleFilter::densifyGround(PointView& view, PointViewPtr gView,
             }
         }
     }
-    log()->get(LogLevel::Debug)
-        << "Ground surface has " << std::accumulate(keep.begin(), keep.end(), 0)
-        << " points after densification\n";
+    //log()->get(LogLevel::Debug)
+    //    << "Ground surface has " << std::accumulate(keep.begin(), keep.end(), 0)
+    //    << " points after densification with threshold " << m_thresh
+    //    << std::endl;
+    log()->get(LogLevel::Debug) << "Radius: " << m_radius
+	                        << ", thresh: " << m_thresh
+				<< ", kept: " << std::accumulate(keep.begin(), keep.end(), 0)
+				<< ", ground: " << gView->size()
+				<< ", total: " << view.size() << std::endl;
 }
 
 void MinSampleFilter::filter(PointView& inView)
@@ -236,6 +258,7 @@ void MinSampleFilter::filter(PointView& inView)
     {
         keep.assign(inView.size(), 1);
         m_radius *= 0.5;
+        m_thresh *= 0.9;
         maskGroundNeighbors(inView, index, keep);
         densifyGround(inView, gView, index, keep);
     }

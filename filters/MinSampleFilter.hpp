@@ -56,6 +56,7 @@ private:
     double m_radius;
     int m_count;
     int m_maxiters;
+    double m_thresh;
 
     virtual void addArgs(ProgramArgs& args);
     virtual void addDimensions(PointLayoutPtr layout);
