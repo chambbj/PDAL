@@ -46,9 +46,7 @@ class Options;
 class PDAL_DLL MinSampleFilter : public pdal::Filter
 {
 public:
-    MinSampleFilter() : Filter()
-    {
-    }
+    MinSampleFilter() : Filter() {}
     MinSampleFilter& operator=(const MinSampleFilter&) = delete;
     MinSampleFilter(const MinSampleFilter&) = delete;
 
@@ -62,8 +60,8 @@ private:
     virtual void addDimensions(PointLayoutPtr layout);
     virtual void filter(PointView& view);
 
-
-    void maskNeighbors(PointView& view, std::vector<int>& keep);
+    PointViewPtr maskNeighbors(PointView& view, const KD2Index& index,
+                               std::vector<int>& keep);
 };
 
 } // namespace pdal

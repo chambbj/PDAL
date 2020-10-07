@@ -68,8 +68,42 @@ void MinSampleFilter::addDimensions(PointLayoutPtr layout)
     layout->registerDim(Id::HeightAboveGround);
 }
 
-void MinSampleFilter::maskNeighbors(PointView& view, std::vector<int>& keep)
+PointViewPtr MinSampleFilter::maskNeighbors(PointView& view,
+                                            const KD2Index& index,
+                                            std::vector<int>& keep)
 {
+    PointViewPtr gView = view.makeNew();
+    // We are able to subsample in a single pass over the shuffled indices.
+    // for (auto const& i : indices)
+    for (PointRef p : view)
+    {
+        // If a point is masked, it is forever masked, and cannot be part of the
+        // sampled cloud. Otherwise, the current index is appended to the output
+        // PointView.
+        if (keep[p.pointId()] == 0)
+            continue;
+
+        PointIdList ids0 = index.radius(p, m_radius);
+
+        p.setField(Id::Classification, ClassLabel::Ground);
+        gView->appendPoint(view, p.pointId());
+
+        // We now proceed to mask all neighbors within m_radius of the kept
+        // point.
+        for (PointId const& j : ids0)
+        {
+            if (j == p.pointId())
+                continue;
+            keep[j] = 0;
+            view.setField(Id::Classification, j, ClassLabel::Unclassified);
+        }
+    }
+
+    log()->get(LogLevel::Debug) << "Done with first pass, seeds generated\n";
+    log()->get(LogLevel::Debug)
+        << std::accumulate(keep.begin(), keep.end(), 0) << std::endl;
+
+    return gView;
 }
 
 void MinSampleFilter::filter(PointView& inView)
@@ -90,48 +124,17 @@ void MinSampleFilter::filter(PointView& inView)
     std::stable_sort(inView.begin(), inView.end(), cmp);
 
     // Build the 2D KD-tree.
-    KD2Index index(inView);
-    index.build();
+    const KD2Index& index = inView.build2dIndex();
 
     // All points are marked as kept (1) by default. As they are masked by
     // neighbors within the user-specified radius, their value is changed to 0.
     std::vector<int> keep(inView.size(), 1);
-
-    PointViewPtr gView = inView.makeNew();
-
-    // We are able to subsample in a single pass over the shuffled indices.
-    // for (auto const& i : indices)
-    for (PointRef p : inView)
-    {
-        // If a point is masked, it is forever masked, and cannot be part of the
-        // sampled cloud. Otherwise, the current index is appended to the output
-        // PointView.
-        if (keep[p.pointId()] == 0)
-            continue;
-
-        PointIdList ids0 = index.radius(p, m_radius);
-
-        p.setField(Id::Classification, ClassLabel::Ground);
-        gView->appendPoint(inView, p.pointId());
-
-        // We now proceed to mask all neighbors within m_radius of the kept
-        // point.
-        for (PointId const& j : ids0)
-        {
-            if (j == p.pointId())
-                continue;
-            keep[j] = 0;
-            inView.setField(Id::Classification, j, ClassLabel::Unclassified);
-        }
-    }
-
-    log()->get(LogLevel::Debug) << "Done with first pass, seeds generated\n";
-    log()->get(LogLevel::Debug)
-        << std::accumulate(keep.begin(), keep.end(), 0) << std::endl;
+    PointViewPtr gView = maskNeighbors(inView, index, keep);
 
     // update mask at smaller radius
     keep.assign(inView.size(), 1);
-    log()->get(LogLevel::Debug) << keep.size() << ", " << inView.size() << std::endl;
+    log()->get(LogLevel::Debug)
+        << keep.size() << ", " << inView.size() << std::endl;
     KD2Index index2(inView);
     index2.build();
     m_radius *= 0.5;
@@ -153,8 +156,7 @@ void MinSampleFilter::filter(PointView& inView)
         }
     }
 
-    log()->get(LogLevel::Debug)
-        << "Mask updated at " << m_radius << std::endl;
+    log()->get(LogLevel::Debug) << "Mask updated at " << m_radius << std::endl;
     log()->get(LogLevel::Debug)
         << std::accumulate(keep.begin(), keep.end(), 0) << std::endl;
 
@@ -220,19 +222,21 @@ void MinSampleFilter::filter(PointView& inView)
                 if (j == p.pointId())
                     continue;
                 keep[j] = 0;
-                //inView.setField(Id::Classification, j,
+                // inView.setField(Id::Classification, j,
                 //                ClassLabel::Unclassified);
             }
             log()->get(LogLevel::Debug)
-                << std::accumulate(keep.begin(), keep.end(), 0) << ", " << ++numAdded << std::endl;
+                << std::accumulate(keep.begin(), keep.end(), 0) << ", "
+                << ++numAdded << std::endl;
         }
     }
 
     // update mask at smaller radius
     keep.assign(inView.size(), 1);
-    log()->get(LogLevel::Debug) << keep.size() << ", " << inView.size() << std::endl;
-    //KD2Index index2(inView);
-    //index2.build();
+    log()->get(LogLevel::Debug)
+        << keep.size() << ", " << inView.size() << std::endl;
+    // KD2Index index2(inView);
+    // index2.build();
     m_radius *= 0.5;
     for (PointRef p : inView)
     {
@@ -251,15 +255,14 @@ void MinSampleFilter::filter(PointView& inView)
         }
     }
 
-    log()->get(LogLevel::Debug)
-        << "Mask updated at " << m_radius << std::endl;
+    log()->get(LogLevel::Debug) << "Mask updated at " << m_radius << std::endl;
     log()->get(LogLevel::Debug)
         << std::accumulate(keep.begin(), keep.end(), 0) << std::endl;
 
     KD2Index& gIndex2 = gView->build2dIndex();
     numAdded = 0;
-    //KD2Index index3(inView);
-    //index3.build();
+    // KD2Index index3(inView);
+    // index3.build();
     for (PointRef p : inView)
     {
         if (keep[p.pointId()] == 0)
@@ -318,19 +321,21 @@ void MinSampleFilter::filter(PointView& inView)
                 if (j == p.pointId())
                     continue;
                 keep[j] = 0;
-                //inView.setField(Id::Classification, j,
+                // inView.setField(Id::Classification, j,
                 //                ClassLabel::Unclassified);
             }
             log()->get(LogLevel::Debug)
-                << std::accumulate(keep.begin(), keep.end(), 0) << ", " << ++numAdded << std::endl;
+                << std::accumulate(keep.begin(), keep.end(), 0) << ", "
+                << ++numAdded << std::endl;
         }
     }
 
     // update mask at smaller radius
     keep.assign(inView.size(), 1);
-    log()->get(LogLevel::Debug) << keep.size() << ", " << inView.size() << std::endl;
-    //KD2Index index2(inView);
-    //index2.build();
+    log()->get(LogLevel::Debug)
+        << keep.size() << ", " << inView.size() << std::endl;
+    // KD2Index index2(inView);
+    // index2.build();
     m_radius *= 0.5;
     for (PointRef p : inView)
     {
@@ -349,15 +354,14 @@ void MinSampleFilter::filter(PointView& inView)
         }
     }
 
-    log()->get(LogLevel::Debug)
-        << "Mask updated at " << m_radius << std::endl;
+    log()->get(LogLevel::Debug) << "Mask updated at " << m_radius << std::endl;
     log()->get(LogLevel::Debug)
         << std::accumulate(keep.begin(), keep.end(), 0) << std::endl;
 
     KD2Index& gIndex3 = gView->build2dIndex();
     numAdded = 0;
-    //KD2Index index3(inView);
-    //index3.build();
+    // KD2Index index3(inView);
+    // index3.build();
     for (PointRef p : inView)
     {
         if (keep[p.pointId()] == 0)
@@ -416,19 +420,21 @@ void MinSampleFilter::filter(PointView& inView)
                 if (j == p.pointId())
                     continue;
                 keep[j] = 0;
-                //inView.setField(Id::Classification, j,
+                // inView.setField(Id::Classification, j,
                 //                ClassLabel::Unclassified);
             }
             log()->get(LogLevel::Debug)
-                << std::accumulate(keep.begin(), keep.end(), 0) << ", " << ++numAdded << std::endl;
+                << std::accumulate(keep.begin(), keep.end(), 0) << ", "
+                << ++numAdded << std::endl;
         }
     }
 
     // update mask at smaller radius
     keep.assign(inView.size(), 1);
-    log()->get(LogLevel::Debug) << keep.size() << ", " << inView.size() << std::endl;
-    //KD2Index index2(inView);
-    //index2.build();
+    log()->get(LogLevel::Debug)
+        << keep.size() << ", " << inView.size() << std::endl;
+    // KD2Index index2(inView);
+    // index2.build();
     m_radius *= 0.5;
     for (PointRef p : inView)
     {
@@ -447,15 +453,14 @@ void MinSampleFilter::filter(PointView& inView)
         }
     }
 
-    log()->get(LogLevel::Debug)
-        << "Mask updated at " << m_radius << std::endl;
+    log()->get(LogLevel::Debug) << "Mask updated at " << m_radius << std::endl;
     log()->get(LogLevel::Debug)
         << std::accumulate(keep.begin(), keep.end(), 0) << std::endl;
 
     KD2Index& gIndex4 = gView->build2dIndex();
     numAdded = 0;
-    //KD2Index index3(inView);
-    //index3.build();
+    // KD2Index index3(inView);
+    // index3.build();
     for (PointRef p : inView)
     {
         if (keep[p.pointId()] == 0)
@@ -514,11 +519,12 @@ void MinSampleFilter::filter(PointView& inView)
                 if (j == p.pointId())
                     continue;
                 keep[j] = 0;
-                //inView.setField(Id::Classification, j,
+                // inView.setField(Id::Classification, j,
                 //                ClassLabel::Unclassified);
             }
             log()->get(LogLevel::Debug)
-                << std::accumulate(keep.begin(), keep.end(), 0) << ", " << ++numAdded << std::endl;
+                << std::accumulate(keep.begin(), keep.end(), 0) << ", "
+                << ++numAdded << std::endl;
         }
     }
 }
