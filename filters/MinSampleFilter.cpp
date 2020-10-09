@@ -133,7 +133,7 @@ PointViewPtr MinSampleFilter::maskNeighbors(PointView& view,
     }
 
     log()->get(LogLevel::Debug)
-        << "Radius: " << m_radius << ", thresh: " << m_thresh
+        << "Radius: " << m_radius * m_maxrange << ", thresh: " << m_thresh * m_maxrange
         << ", lambda: " << m_lambda << ", ground: " << numGround
         << ", unclass: " << numUnclass << ", never: " << numNeverClass
         << ", total: " << view.size() << std::endl;
@@ -187,7 +187,7 @@ void MinSampleFilter::maskGroundNeighbors(PointView& view,
     }
 
     log()->get(LogLevel::Debug)
-        << "Radius: " << m_radius << ", thresh: " << m_thresh
+        << "Radius: " << m_radius * m_maxrange<< ", thresh: " << m_thresh * m_maxrange
         << ", lambda: " << m_lambda << ", ground: " << numGround
         << ", unclass: " << numUnclass << ", never: " << numNeverClass
         << ", total: " << view.size() << std::endl;
@@ -285,7 +285,7 @@ void MinSampleFilter::densifyGround(PointView& view, PointViewPtr gView,
     }
 
     log()->get(LogLevel::Debug)
-        << "Radius: " << m_radius << ", thresh: " << m_thresh
+        << "Radius: " << m_radius * m_maxrange << ", thresh: " << m_thresh * m_maxrange
         << ", lambda: " << m_lambda << ", ground: " << numGround
         << ", unclass: " << numUnclass << ", never: " << numNeverClass
         << ", total: " << view.size() << std::endl;
@@ -311,10 +311,10 @@ void MinSampleFilter::filter(PointView& inView)
     double xrange = m_bounds.maxx - m_bounds.minx;
     double yrange = m_bounds.maxy - m_bounds.miny;
     double zrange = m_bounds.maxz - m_bounds.minz;
-    double maxrange = 2 * std::max(xrange, std::max(yrange, zrange));
+    m_maxrange = 2 * std::max(xrange, std::max(yrange, zrange));
 
-    m_radius /= maxrange;
-    m_thresh /= maxrange;
+    m_radius /= m_maxrange;
+    m_thresh /= m_maxrange;
 
     PointIdList ids(inView.size());
     std::iota(ids.begin(), ids.end(), 0);
@@ -325,9 +325,9 @@ void MinSampleFilter::filter(PointView& inView)
         double x = p.getFieldAs<double>(Id::X) - centroid.x();
         double y = p.getFieldAs<double>(Id::Y) - centroid.y();
         double z = p.getFieldAs<double>(Id::Z) - centroid.z();
-        p.setField(Id::X, x / maxrange);
-        p.setField(Id::Y, y / maxrange);
-        p.setField(Id::Z, z / maxrange);
+        p.setField(Id::X, x / m_maxrange);
+        p.setField(Id::Y, y / m_maxrange);
+        p.setField(Id::Z, z / m_maxrange);
     }
 
     // Build the 2D KD-tree. Important that this comes after the sort!
@@ -352,9 +352,9 @@ void MinSampleFilter::filter(PointView& inView)
 
     for (PointRef p : inView)
     {
-        double x = p.getFieldAs<double>(Id::X) * maxrange;
-        double y = p.getFieldAs<double>(Id::Y) * maxrange;
-        double z = p.getFieldAs<double>(Id::Z) * maxrange;
+        double x = p.getFieldAs<double>(Id::X) * m_maxrange;
+        double y = p.getFieldAs<double>(Id::Y) * m_maxrange;
+        double z = p.getFieldAs<double>(Id::Z) * m_maxrange;
         p.setField(Id::X, x + centroid.x());
         p.setField(Id::Y, y + centroid.y());
         p.setField(Id::Z, z + centroid.z());

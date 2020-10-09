@@ -32,47 +32,74 @@
  * OF SUCH DAMAGE.
  ****************************************************************************/
 
-#pragma once
+#include "MorphologicalOpeningFilter.hpp"
 
-#include <pdal/Filter.hpp>
-
-#include <string>
+#include <pdal/KDIndex.hpp>
+#include <pdal/util/ProgramArgs.hpp>
 
 namespace pdal
 {
+using namespace Dimension;
 
-class Options;
+static StaticPluginInfo const s_info{
+    "filters.morphopen", "Morphological opening",
+    "http://pdal.io/stages/filters.morphopen.html"};
 
-class PDAL_DLL MinSampleFilter : public pdal::Filter
+CREATE_STATIC_STAGE(MorphologicalOpeningFilter, s_info)
+
+struct MorphologicalOpeningArgs
 {
-public:
-    MinSampleFilter() : Filter() {}
-    MinSampleFilter& operator=(const MinSampleFilter&) = delete;
-    MinSampleFilter(const MinSampleFilter&) = delete;
-
-    std::string getName() const;
-
-private:
-    double m_radius;
-    int m_count;
-    int m_maxiters;
-    double m_thresh;
-    double m_radDecay;
-    double m_threshDecay;
-    double m_lambda;
-    double m_lambdaDecay;
-    Arg* m_lambdaArg;
-    BOX3D m_bounds;
-    double m_maxrange;
-
-    virtual void addArgs(ProgramArgs& args);
-    virtual void addDimensions(PointLayoutPtr layout);
-    virtual void filter(PointView& view);
-
-    PointViewPtr maskNeighbors(PointView& view, const KD2Index& index);
-    void maskGroundNeighbors(PointView& view, const KD2Index& index);
-    void densifyGround(PointView& view, PointViewPtr gView,
-                       const KD2Index& index);
+    double m_window;
+    //TODO(chambbj): allow flexibility in the dimension to be opened!
 };
+
+MorphologicalOpeningFilter::MorphologicalOpeningFilter() : m_args(new MorphologicalOpeningArgs) {}
+
+MorphologicalOpeningFilter::~MorphologicalOpeningFilter() {}
+
+std::string MorphologicalOpeningFilter::getName() const
+{
+    return s_info.name;
+}
+
+void MorphologicalOpeningFilter::addArgs(ProgramArgs& args)
+{
+    args.add("window", "Window size", m_args->m_window, 11.0);
+}
+
+void MorphologicalOpeningFilter::addDimensions(PointLayoutPtr layout)
+{
+    layout->registerDim(Id::OpenErodeZ);
+    layout->registerDim(Id::OpenDilateZ);
+}
+
+void MorphologicalOpeningFilter::filter(PointView& view)
+{
+    if (!view.size())
+        return;
+
+    const KD2Index& kdi = view.build2dIndex();
+
+    // erode, find min per Z
+    for (PointRef p : view)
+    {
+	    PointIdList ids = kdi.radius(p, m_args->m_window);
+	    std::vector<double> z(ids.size());
+	    for (size_t i = 0; i < ids.size(); ++i)
+		    z[i] = view.getFieldAs<double>(Id::Z, ids[i]);
+	    auto it = std::min_element(z.begin(), z.end());
+	    p.setField(Id::OpenErodeZ, *it);
+    }
+    // dilate, find max per erosion
+    for (PointRef p : view)
+    {
+	    PointIdList ids = kdi.radius(p, m_args->m_window);
+	    std::vector<double> z(ids.size());
+	    for (size_t i = 0; i < ids.size(); ++i)
+		    z[i] = view.getFieldAs<double>(Id::OpenErodeZ, ids[i]);
+	    auto it = std::max_element(z.begin(), z.end());
+	    p.setField(Id::OpenDilateZ, *it);
+    }
+}
 
 } // namespace pdal

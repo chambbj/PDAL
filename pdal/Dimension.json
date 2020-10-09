@@ -466,5 +466,30 @@
     "name": "OptimalRadius",
     "type": "double",
     "description": "Radius corresponding to optimal k nearest neighbors, such that eigenentropy is minimized."
+    },
+    {
+    "name": "OpenErodeZ",
+    "type": "double",
+    "description": "Elevation of a point after undergoing morphological opening."
+    },
+    {
+    "name": "OpenDilateZ",
+    "type": "double",
+    "description": "Elevation of a point after undergoing morphological opening."
+    },
+    {
+    "name": "CloseErodeZ",
+    "type": "double",
+    "description": "Elevation of a point after undergoing morphological opening."
+    },
+    {
+    "name": "CloseDilateZ",
+    "type": "double",
+    "description": "Elevation of a point after undergoing morphological opening."
+    },
+    {
+    "name": "Erosion",
+    "type": "double",
+    "description": "Elevation of a point after undergoing morphological erosion."
     }
 ] }

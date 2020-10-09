@@ -36,43 +36,30 @@
 
 #include <pdal/Filter.hpp>
 
+#include <memory>
 #include <string>
 
 namespace pdal
 {
 
-class Options;
+struct LowOutlierArgs;
 
-class PDAL_DLL MinSampleFilter : public pdal::Filter
+class PDAL_DLL LowOutlierFilter : public Filter
 {
 public:
-    MinSampleFilter() : Filter() {}
-    MinSampleFilter& operator=(const MinSampleFilter&) = delete;
-    MinSampleFilter(const MinSampleFilter&) = delete;
+    LowOutlierFilter();
+    ~LowOutlierFilter();
+    LowOutlierFilter& operator=(const LowOutlierFilter&) = delete;
+    LowOutlierFilter(const LowOutlierFilter&) = delete;
 
     std::string getName() const;
 
 private:
-    double m_radius;
-    int m_count;
-    int m_maxiters;
-    double m_thresh;
-    double m_radDecay;
-    double m_threshDecay;
-    double m_lambda;
-    double m_lambdaDecay;
-    Arg* m_lambdaArg;
-    BOX3D m_bounds;
-    double m_maxrange;
+    std::unique_ptr<LowOutlierArgs> m_args;
 
     virtual void addArgs(ProgramArgs& args);
     virtual void addDimensions(PointLayoutPtr layout);
     virtual void filter(PointView& view);
-
-    PointViewPtr maskNeighbors(PointView& view, const KD2Index& index);
-    void maskGroundNeighbors(PointView& view, const KD2Index& index);
-    void densifyGround(PointView& view, PointViewPtr gView,
-                       const KD2Index& index);
 };
 
 } // namespace pdal
