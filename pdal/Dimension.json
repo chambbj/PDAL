@@ -491,5 +491,10 @@
     "name": "Erosion",
     "type": "double",
     "description": "Elevation of a point after undergoing morphological erosion."
+    },
+    {
+    "name": "TopHat",
+    "type": "double",
+    "description": "White top hat transform result."
     }
 ] }
