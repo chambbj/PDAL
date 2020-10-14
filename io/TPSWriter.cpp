@@ -34,65 +34,21 @@
 
 #include <numeric>
 
-#include <pdal/EigenUtils.hpp>
 #include <pdal/GDALUtils.hpp>
 #include <pdal/KDIndex.hpp>
 #include <pdal/PointView.hpp>
-
-#include "../filters/private/delaunator.hpp"
+#include <pdal/private/MathUtils.hpp>
 
 #include <Eigen/Dense>
 
 namespace pdal
 {
 
+using namespace Dimension;
+using namespace Eigen;
+
 namespace
 {
-// Copy/paste from HagDelaunay.cpp
-
-// https://en.wikipedia.org/wiki/Barycentric_coordinate_system
-// http://blackpawn.com/texts/pointinpoly/default.html
-//
-// If x/y is in the triangle, we'll return a valid distance.
-// If not, we return infinity.  If the determinant is 0, the input points
-// aren't a triangle (they're collinear).
-double distance_along_z(double x1, double y1, double z1, double x2, double y2,
-                        double z2, double x3, double y3, double z3, double x,
-                        double y)
-{
-    double z = std::numeric_limits<double>::infinity();
-
-    double detT = ((y2 - y3) * (x1 - x3)) + ((x3 - x2) * (y1 - y3));
-
-    // ABELL - should probably check something close to 0, rather than
-    // exactly 0.
-    if (detT != 0.0)
-    {
-        // Compute the barycentric coordinates of x,y (relative to
-        // x1/y1, x2/y2, x3/y3).  Essentially the weight that each
-        // corner of the triangle contributes to the point in question.
-
-        // Another way to think about this is that we're making a basis
-        // for the system with the basis vectors being two sides of
-        // the triangle.  You can rearrange the z calculation below in
-        // terms of lambda1 and lambda2 to see this.  Also note that
-        // since lambda1 and lambda2 are coefficients of the basis vectors,
-        // any values outside of the range [0,1] are necessarily out of the
-        // triangle.
-        double lambda1 = ((y2 - y3) * (x - x3) + (x3 - x2) * (y - y3)) / detT;
-        double lambda2 = ((y3 - y1) * (x - x3) + (x1 - x3) * (y - y3)) / detT;
-        if (lambda1 >= 0 && lambda1 <= 1 && lambda2 >= 0 && lambda2 <= 1)
-        {
-            double sum = lambda1 + lambda2;
-            if (sum <= 1)
-            {
-                double lambda3 = 1 - sum;
-                z = (lambda1 * z1) + (lambda2 * z2) + (lambda3 * z3);
-            }
-        }
-    }
-    return z;
-}
 
 // The non-ground point (x0, y0) is in exactly 0 or 1 of the triangles of
 // the ground triangulation, so when we find a triangle containing the point,
@@ -100,57 +56,62 @@ double distance_along_z(double x1, double y1, double z1, double x2, double y2,
 // (I suppose the point could be on a edge of two triangles, but the
 //  result is the same, so this is still good.)
 double delaunay_interp_ground(double x0, double y0, PointViewPtr gView,
-                              const PointIdList& ids)
+                              point_count_t count)
 {
-    using namespace pdal::Dimension;
+    // Build the 2D KD-tree.
+    const KD2Index& gIndex = gView->build2dIndex();
 
-    // Delaunay-based interpolation
-    std::vector<double> neighbors;
-
-    for (size_t j = 0; j < ids.size(); ++j)
+    auto CalcRbfValue = [](const VectorXd& xi, const VectorXd& xj) {
+        double r = (xj - xi).norm();
+        double value = r * r * std::log(r);
+        // std::cerr << "r: " << r << ", rbf: " << value << std::endl;
+        return std::isnan(value) ? 0.0 : value;
+    };
+    PointIdList gIds = gIndex.neighbors(x0, y0, count);
+    MatrixXd X = MatrixXd::Zero(2, count);
+    VectorXd y = VectorXd::Zero(count);
+    VectorXd x = VectorXd::Zero(2);
+    for (point_count_t i = 0; i < count; ++i)
     {
-        neighbors.push_back(gView->getFieldAs<double>(Id::X, ids[j]));
-        neighbors.push_back(gView->getFieldAs<double>(Id::Y, ids[j]));
+        X(0, i) = gView->getFieldAs<double>(Id::X, gIds[i]);
+        X(1, i) = gView->getFieldAs<double>(Id::Y, gIds[i]);
+        y(i) = gView->getFieldAs<double>(Id::Z, gIds[i]);
     }
-
-    delaunator::Delaunator triangulation(neighbors);
-    const std::vector<size_t>& triangles(triangulation.triangles);
-
-    for (size_t j = 0; j < triangles.size(); j += 3)
+    x(0) = x0;
+    x(1) = y0;
+    MatrixXd Phi = MatrixXd::Zero(count, count);
+    for (point_count_t i = 0; i < count; ++i)
     {
-        auto ai = triangles[j + 0];
-        auto bi = triangles[j + 1];
-        auto ci = triangles[j + 2];
-        double ax = gView->getFieldAs<double>(Id::X, ids[ai]);
-        double ay = gView->getFieldAs<double>(Id::Y, ids[ai]);
-        double az = gView->getFieldAs<double>(Id::Z, ids[ai]);
-
-        double bx = gView->getFieldAs<double>(Id::X, ids[bi]);
-        double by = gView->getFieldAs<double>(Id::Y, ids[bi]);
-        double bz = gView->getFieldAs<double>(Id::Z, ids[bi]);
-
-        double cx = gView->getFieldAs<double>(Id::X, ids[ci]);
-        double cy = gView->getFieldAs<double>(Id::Y, ids[ci]);
-        double cz = gView->getFieldAs<double>(Id::Z, ids[ci]);
-
-        // Returns infinity unless the point x0/y0 is in the triangle.
-        double z1 =
-            distance_along_z(ax, ay, az, bx, by, bz, cx, cy, cz, x0, y0);
-        if (z1 != std::numeric_limits<double>::infinity())
-            return z1;
+        for (point_count_t j = 0; j < count; ++j)
+        {
+            double value = CalcRbfValue(X.col(i), X.col(j));
+            Phi(i, j) = Phi(j, i) = value;
+        }
     }
-    // If the non ground point was outside the triangulation of ground
-    // points, just use the Z coordinate of the closest
-    // ground point.
-    return gView->getFieldAs<double>(Id::Z, ids[0]);
+    /*
+    MatrixXd A = m_lambdaArg->set()
+                     ? Phi.transpose() * Phi +
+                           m_lambda * MatrixXd::Identity(count, count)
+                     : Phi;
+    VectorXd b = m_lambdaArg->set() ? Phi.transpose() * y : y;
+    VectorXd w = Eigen::PartialPivLU<MatrixXd>(A).solve(b);
+    */
+    VectorXd w = Eigen::PartialPivLU<MatrixXd>(Phi).solve(y);
+
+    double val(0.0);
+    for (point_count_t i = 0; i < count; ++i)
+    {
+        val += w(i) * CalcRbfValue(x, X.col(i));
+    }
+    return val;
 }
 
 } // unnamed namespace
 
 static StaticPluginInfo const s_info{
-    "writers.tin",
+    "writers.tps",
     "Write a GDAL raster interpolated from a TPS.",
-    "http://pdal.io/stages/writers.tin.html",
+    "http://pdal.io/stages/writers.tps.html",
     {"tif", "tiff"}};
 
 CREATE_STATIC_STAGE(TPSWriter, s_info)
@@ -230,7 +191,6 @@ void TPSWriter::write(const PointViewPtr view)
     // Create a fixed grid, based off bounds, origin, height/width, and cell
     // size considerations. Scan all locations in the fixed grid, obtaining XY.
     // Interpolate Z based off point cloud (all points/ground only).
-    using namespace pdal::Dimension;
 
     PointViewPtr gView = view->makeNew();
 
@@ -240,74 +200,38 @@ void TPSWriter::write(const PointViewPtr view)
         if (point.getFieldAs<uint8_t>(Id::Classification) == ClassLabel::Ground)
             gView->appendPoint(*view, point.pointId());
     }
-    BOX2D gBounds;
-    gView->calculateBounds(gBounds);
 
     // Bail if there weren't any points classified as ground.
     if (gView->size() == 0)
         throwError("Input PointView does not have any points classified "
                    "as ground");
 
-    std::vector<long> cols(((gBounds.maxx - gBounds.minx) / m_edgeLength) + 1);
+    BOX2D bounds;
+    view->calculateBounds(bounds);
+
+    std::vector<long> cols(((bounds.maxx - bounds.minx) / m_edgeLength) + 1);
     std::iota(cols.begin(), cols.end(), 0);
-    std::vector<long> rows(((gBounds.maxy - gBounds.miny) / m_edgeLength) + 1);
+    std::vector<long> rows(((bounds.maxy - bounds.miny) / m_edgeLength) + 1);
     std::iota(rows.begin(), rows.end(), 0);
     std::vector<double> z1(rows.size() * cols.size(),
                            std::numeric_limits<double>::quiet_NaN());
-
-    // Build the 2D KD-tree.
-    const KD2Index& kdi = gView->build2dIndex();
 
     // determine number of rows/cols, create the output matrix, iterate
     for (long const& row : rows)
     {
         for (long const& col : cols)
         {
-            double x0 = gBounds.minx + (col + 0.5) * m_edgeLength;
-            double y0 = gBounds.miny + (row + 0.5) * m_edgeLength;
-            PointIdList ids(m_count);
-            std::vector<double> sqr_dists(m_count);
-            kdi.knnSearch(x0, y0, m_count, &ids, &sqr_dists);
+            double x0 = bounds.minx + (col + 0.5) * m_edgeLength;
+            double y0 = bounds.miny + (row + 0.5) * m_edgeLength;
 
-            // Closest ground point.
-            PointRef gNearest = gView->point(ids[0]);
-            double x = gNearest.getFieldAs<double>(Id::X);
-            double y = gNearest.getFieldAs<double>(Id::Y);
-            double z = gNearest.getFieldAs<double>(Id::Z);
-
-            // If the close ground point is at the same X/Y as the non-ground
-            // point, we're done.  Also, if there's only one ground point, we
-            // just use that.
-            if ((x0 == x && y0 == y) || ids.size() == 1)
-            {
-                z1[col * rows.size() + row] = z;
-            }
-            // If the non-ground point is outside the bounds of all the
-            // ground points and we're not doing extrapolation, just return
-            // its current Z, which will give a HAG of 0.
-            else if (
-                !gBounds.contains(
-                    x0, y0) /* && !m_allowExtrapolation*/) // we currently have
-                                                           // no
-                                                           // allowExtrapolation
-                                                           // could bring over
-                                                           // from HagDelaunay
-            {
-                // z1[col*rows.size()+row] = z0;
-                // but the raster has no z0, maybe z again? or leave as NaN?
-                z1[col * rows.size() + row] = z;
-            }
-            else
-            {
-                z1[col * rows.size() + row] =
-                    delaunay_interp_ground(x0, y0, gView, ids);
-            }
+            z1[col * rows.size() + row] =
+                delaunay_interp_ground(x0, y0, gView, m_count);
         }
     }
-    Eigen::MatrixXd zInterp =
-        Eigen::Map<Eigen::MatrixXd>(z1.data(), rows.size(), cols.size());
-    writeMatrix(zInterp, m_filename, "GTiff", m_edgeLength, gBounds,
-                gView->spatialReference());
+    MatrixXd zInterp =
+        Eigen::Map<MatrixXd>(z1.data(), rows.size(), cols.size());
+    math::writeMatrix(zInterp, m_filename, "GTiff", m_edgeLength, bounds,
+                      gView->spatialReference());
 }
 
 void TPSWriter::done(PointTableRef table)

@@ -31,8 +31,6 @@
  * OF SUCH DAMAGE.
  ****************************************************************************/
 
-//#include <algorithm>
-
 #include <pdal/PointView.hpp>
 #include <pdal/Writer.hpp>
 #include <pdal/util/ProgramArgs.hpp>

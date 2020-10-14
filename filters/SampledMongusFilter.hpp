@@ -70,8 +70,10 @@ private:
     virtual void filter(PointView& view);
 
     PointIdList sample(PointView& view);
+    PointIdList sample(PointView& view, PointIdList ids);
     PointIdList foo(PointView& view, PointIdList ids);
     void bar(PointView& view, PointIdList ids);
+    void baz(PointView& view, PointIdList ids);
 };
 
 } // namespace pdal

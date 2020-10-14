@@ -77,13 +77,39 @@ void SampledMongusFilter::addDimensions(PointLayoutPtr layout)
 {
     layout->registerDim(Id::HeightAboveGround);
     layout->registerDim(Id::TopHat);
+    layout->registerDim(Id::W);
+    layout->registerDim(Id::OpenErodeZ);
+    layout->registerDim(Id::OpenDilateZ);
 }
 
 PointIdList SampledMongusFilter::sample(PointView& view)
 {
+    PointIdList emptyids;
+    return sample(view, emptyids);
+}
+
+PointIdList SampledMongusFilter::sample(PointView& view, PointIdList ids)
+{
     PointIdList samples;
     const KD2Index& index = view.build2dIndex();
     std::vector<int> keep(view.size(), 1);
+
+    /*
+    for (PointId const& id : ids)
+    {
+        if (keep[id] == 0)
+            continue;
+        samples.push_back(id);
+        PointIdList neighbors = index.radius(id, m_radius);
+        for (PointId const& neighbor : neighbors)
+        {
+            if (neighbor == id)
+                continue;
+            keep[neighbor] = 0;
+        }
+    }
+    */
+
     for (PointRef p : view)
     {
         if (keep[p.pointId()] == 0)
@@ -114,7 +140,7 @@ PointIdList SampledMongusFilter::foo(PointView& view, PointIdList ids)
         gView->appendPoint(view, id);
     const KD2Index& gIndex = gView->build2dIndex();
 
-    PointIdList candidates = sample(view);
+    PointIdList candidates = sample(view, ids);
     typedef std::map<PointId, double> ValueMap;
     ValueMap residuals;
     PointViewPtr candView = view.makeNew();
@@ -162,6 +188,7 @@ PointIdList SampledMongusFilter::foo(PointView& view, PointIdList ids)
         {
             val += w(i) * CalcRbfValue(x, X.col(i));
         }
+	p.setField(Id::HeightAboveGround, (p.getFieldAs<double>(Id::Z)-val));
         residuals[p.pointId()] = p.getFieldAs<double>(Id::Z) - val;
     }
 
@@ -179,9 +206,10 @@ PointIdList SampledMongusFilter::foo(PointView& view, PointIdList ids)
         std::vector<double> z(cIds.size());
         for (size_t i = 0; i < cIds.size(); ++i)
             z[i] = residuals[cIds[i]];
-        vm[p.pointId()] = *std::min_element(z.begin(), z.end());
+        double val = *std::min_element(z.begin(), z.end());
+	p.setField(Id::OpenErodeZ, val);
         log()->get(LogLevel::Debug)
-            << m_maxrange * *std::min_element(z.begin(), z.end()) << std::endl;
+            << m_maxrange * val << std::endl;
     }
 
     PointIdList kept;
@@ -191,10 +219,11 @@ PointIdList SampledMongusFilter::foo(PointView& view, PointIdList ids)
         PointIdList cIds = nm[p.pointId()];
         std::vector<double> z(cIds.size());
         for (size_t i = 0; i < cIds.size(); ++i)
-            z[i] = vm[cIds[i]];
+            z[i] = candView->getFieldAs<double>(Id::OpenErodeZ, cIds[i]);
         double vm2 = *std::max_element(z.begin(), z.end());
+	p.setField(Id::OpenDilateZ, vm2);
         log()->get(LogLevel::Debug)
-            << m_maxrange * *std::max_element(z.begin(), z.end()) << std::endl;
+            << m_maxrange * vm2 << std::endl;
 
         double M1, M2;
         M1 = M2 = 0.0;
@@ -223,6 +252,8 @@ PointIdList SampledMongusFilter::foo(PointView& view, PointIdList ids)
         if ((residuals[p.pointId()] - vm2) <
             (M1 + 3 * std::sqrt(M2 / (cnt - 1.0))))
             kept.push_back(candidates[p.pointId()]);
+        p.setField(Id::TopHat, (residuals[p.pointId()] - vm2));
+	p.setField(Id::W, (M1 + 3 * std::sqrt(M2/(cnt-1.0))));
     }
     log()->get(LogLevel::Debug)
         << "Keep " << kept.size() << " of " << candidates.size() << std::endl;
@@ -295,6 +326,7 @@ void SampledMongusFilter::bar(PointView& view, PointIdList ids)
         // std::cerr << "residual: " << residuals[p.pointId()] << " (" <<
         // residuals[p.pointId()]*m_maxrange << ")" << std::endl;
         p.setField(Id::HeightAboveGround, residuals[p.pointId()] * m_maxrange);
+        p.setField(Id::Z, val);
     }
 
     // apply white top hat transform to residuals
@@ -346,6 +378,61 @@ void SampledMongusFilter::bar(PointView& view, PointIdList ids)
         p.setField(Id::TopHat, residuals[p.pointId()] - vm2);
     }
 }
+
+void SampledMongusFilter::baz(PointView& view, PointIdList ids)
+{
+    // build view from ids and index it
+    PointViewPtr gView = view.makeNew();
+    for (PointId const& id : ids)
+        gView->appendPoint(view, id);
+    const KD2Index& gIndex = gView->build2dIndex();
+
+    for (PointRef p : view)
+    {
+        auto CalcRbfValue = [](const VectorXd& xi, const VectorXd& xj) {
+            double r = (xj - xi).norm();
+            double value = r * r * std::log(r);
+            // std::cerr << "r: " << r << ", rbf: " << value << std::endl;
+            return std::isnan(value) ? 0.0 : value;
+        };
+        PointIdList gIds = gIndex.neighbors(p, m_count);
+        MatrixXd X = MatrixXd::Zero(2, m_count);
+        VectorXd y = VectorXd::Zero(m_count);
+        VectorXd x = VectorXd::Zero(2);
+        for (int i = 0; i < m_count; ++i)
+        {
+            X(0, i) = gView->getFieldAs<double>(Id::X, gIds[i]);
+            X(1, i) = gView->getFieldAs<double>(Id::Y, gIds[i]);
+            y(i) = gView->getFieldAs<double>(Id::Z, gIds[i]);
+        }
+        x(0) = p.getFieldAs<double>(Id::X);
+        x(1) = p.getFieldAs<double>(Id::Y);
+        MatrixXd Phi = MatrixXd::Zero(m_count, m_count);
+        for (int i = 0; i < m_count; ++i)
+        {
+            for (int j = 0; j < m_count; ++j)
+            {
+                double value = CalcRbfValue(X.col(i), X.col(j));
+                Phi(i, j) = Phi(j, i) = value;
+            }
+        }
+        MatrixXd A = m_lambdaArg->set()
+                         ? Phi.transpose() * Phi +
+                               m_lambda * MatrixXd::Identity(m_count, m_count)
+                         : Phi;
+        VectorXd b = m_lambdaArg->set() ? Phi.transpose() * y : y;
+        VectorXd w = Eigen::PartialPivLU<MatrixXd>(A).solve(b);
+
+        double val(0.0);
+        for (int i = 0; i < m_count; ++i)
+        {
+            val += w(i) * CalcRbfValue(x, X.col(i));
+        }
+	p.setField(Id::HeightAboveGround, m_maxrange*(p.getFieldAs<double>(Id::Z)-val));
+        p.setField(Id::Z, val);
+    }
+}
+
 
 void SampledMongusFilter::filter(PointView& inView)
 {
@@ -400,51 +487,13 @@ void SampledMongusFilter::filter(PointView& inView)
         groundsamples.swap(newSamples);
     }
 
-    /*
-    for (PointId const& id : samples)
-        inView.setField(Id::Classification, id, ClassLabel::Unclassified);
-    PointIdList newSamples = foo(inView, samples, m_radius * 0.5);
-    for (PointId const& id : newSamples)
-    {
-        if (inView.getFieldAs<uint8_t>(Id::Classification, id) ==
-            ClassLabel::CreatedNeverClassified)
-            inView.setField(Id::Classification, id, ClassLabel::Ground);
-    }
-    PointIdList newerSamples = foo(inView, newSamples, m_radius * 0.25);
-    for (PointId const& id : newerSamples)
-    {
-        if (inView.getFieldAs<uint8_t>(Id::Classification, id) ==
-            ClassLabel::CreatedNeverClassified)
-            inView.setField(Id::Classification, id, ClassLabel::LowVegetation);
-    }
-    PointIdList newestSamples = foo(inView, newerSamples, m_radius * 0.125);
-    for (PointId const& id : newestSamples)
-    {
-        if (inView.getFieldAs<uint8_t>(Id::Classification, id) ==
-            ClassLabel::CreatedNeverClassified)
-            inView.setField(Id::Classification, id,
-                            ClassLabel::MediumVegetation);
-    }
-    PointIdList newestestSamples =
-        foo(inView, newestSamples, m_radius * 0.0625);
-    for (PointId const& id : newestestSamples)
-    {
-        if (inView.getFieldAs<uint8_t>(Id::Classification, id) ==
-            ClassLabel::CreatedNeverClassified)
-            inView.setField(Id::Classification, id, ClassLabel::HighVegetation);
-    }
-    PointIdList newestestestSamples =
-        foo(inView, newestestSamples, m_radius * 0.03125);
-    for (PointId const& id : newestestestSamples)
-    {
-        if (inView.getFieldAs<uint8_t>(Id::Classification, id) ==
-            ClassLabel::CreatedNeverClassified)
-            inView.setField(Id::Classification, id, ClassLabel::Building);
-    }
-    */
-
     // need a final pass that compares ALL points to the TPS and records HAG
-    bar(inView, groundsamples);
+    //bar(inView, groundsamples);
+    //baz(inView, groundsamples);
+
+    // instead of finalizing, for now maybe just write out the current control points
+    for (PointId const& id : groundsamples)
+        inView.setField(Id::Classification, id, ClassLabel::Ground);
 
     for (PointRef p : inView)
     {
