@@ -188,7 +188,7 @@ PointIdList SampledMongusFilter::foo(PointView& view, PointIdList ids)
         {
             val += w(i) * CalcRbfValue(x, X.col(i));
         }
-	p.setField(Id::HeightAboveGround, (p.getFieldAs<double>(Id::Z)-val));
+        p.setField(Id::HeightAboveGround, (p.getFieldAs<double>(Id::Z) - val));
         residuals[p.pointId()] = p.getFieldAs<double>(Id::Z) - val;
     }
 
@@ -207,9 +207,8 @@ PointIdList SampledMongusFilter::foo(PointView& view, PointIdList ids)
         for (size_t i = 0; i < cIds.size(); ++i)
             z[i] = residuals[cIds[i]];
         double val = *std::min_element(z.begin(), z.end());
-	p.setField(Id::OpenErodeZ, val);
-        log()->get(LogLevel::Debug)
-            << m_maxrange * val << std::endl;
+        p.setField(Id::OpenErodeZ, val);
+        log()->get(LogLevel::Debug) << m_maxrange * val << std::endl;
     }
 
     PointIdList kept;
@@ -221,14 +220,13 @@ PointIdList SampledMongusFilter::foo(PointView& view, PointIdList ids)
         for (size_t i = 0; i < cIds.size(); ++i)
             z[i] = candView->getFieldAs<double>(Id::OpenErodeZ, cIds[i]);
         double vm2 = *std::max_element(z.begin(), z.end());
-	p.setField(Id::OpenDilateZ, vm2);
-        log()->get(LogLevel::Debug)
-            << m_maxrange * vm2 << std::endl;
+        p.setField(Id::OpenDilateZ, vm2);
+        log()->get(LogLevel::Debug) << m_maxrange * vm2 << std::endl;
 
         double M1, M2;
         M1 = M2 = 0.0;
         point_count_t cnt = 0;
-	std::cerr << "res-vm: ";
+        std::cerr << "res-vm: ";
         for (size_t i = 0; i < cIds.size(); ++i)
         {
             point_count_t n(cnt++);
@@ -236,9 +234,9 @@ PointIdList SampledMongusFilter::foo(PointView& view, PointIdList ids)
             double delta_n = delta / cnt;
             M1 += delta_n;
             M2 += delta * delta_n * n;
-	    std::cerr << m_maxrange * (residuals[cIds[i]] - vm2) << "  ";
+            std::cerr << m_maxrange * (residuals[cIds[i]] - vm2) << "  ";
         }
-	std::cerr << std::endl;
+        std::cerr << std::endl;
 
         log()->get(LogLevel::Debug)
             << p.pointId() << ": " << M1 * m_maxrange << " + 3 * "
@@ -253,7 +251,7 @@ PointIdList SampledMongusFilter::foo(PointView& view, PointIdList ids)
             (M1 + 3 * std::sqrt(M2 / (cnt - 1.0))))
             kept.push_back(candidates[p.pointId()]);
         p.setField(Id::TopHat, (residuals[p.pointId()] - vm2));
-	p.setField(Id::W, (M1 + 3 * std::sqrt(M2/(cnt-1.0))));
+        p.setField(Id::W, (M1 + 3 * std::sqrt(M2 / (cnt - 1.0))));
     }
     log()->get(LogLevel::Debug)
         << "Keep " << kept.size() << " of " << candidates.size() << std::endl;
@@ -428,11 +426,11 @@ void SampledMongusFilter::baz(PointView& view, PointIdList ids)
         {
             val += w(i) * CalcRbfValue(x, X.col(i));
         }
-	p.setField(Id::HeightAboveGround, m_maxrange*(p.getFieldAs<double>(Id::Z)-val));
+        p.setField(Id::HeightAboveGround,
+                   m_maxrange * (p.getFieldAs<double>(Id::Z) - val));
         p.setField(Id::Z, val);
     }
 }
-
 
 void SampledMongusFilter::filter(PointView& inView)
 {
@@ -488,10 +486,11 @@ void SampledMongusFilter::filter(PointView& inView)
     }
 
     // need a final pass that compares ALL points to the TPS and records HAG
-    //bar(inView, groundsamples);
-    //baz(inView, groundsamples);
+    // bar(inView, groundsamples);
+    // baz(inView, groundsamples);
 
-    // instead of finalizing, for now maybe just write out the current control points
+    // instead of finalizing, for now maybe just write out the current control
+    // points
     for (PointId const& id : groundsamples)
         inView.setField(Id::Classification, id, ClassLabel::Ground);
 
