@@ -82,12 +82,96 @@ void SampledMongusFilter::addDimensions(PointLayoutPtr layout)
     layout->registerDim(Id::Residual);
 }
 
+std::vector<PointIdList> SampledMongusFilter::buildScaleSpace(PointView& view)
+{
+    // things that should be constant or parameters, we'll hardcode here for now
+    double target_radius = 1.0;
+    double max_radius = 40.0;
+    point_count_t min_pts = 3;
+
+    std::vector<PointIdList> ss;
+
+    PointIdList samples;
+    const KD2Index& index = view.build2dIndex();
+    std::vector<int> keep(view.size(), 1);
+
+    for (PointRef p : view)
+    {
+        if (keep[p.pointId()] == 0)
+            continue;
+        samples.push_back(p.pointId());
+        PointIdList neighbors = index.radius(p, target_radius);
+        for (PointId const& neighbor : neighbors)
+        {
+            if (neighbor == p.pointId())
+                continue;
+            keep[neighbor] = 0;
+        }
+    }
+
+    ss.push_back(samples);
+
+    log()->get(LogLevel::Debug)
+        << "Sampled " << samples.size() << " points from " << view.size()
+        << " at radius of " << target_radius << std::endl;
+
+    double radius = target_radius;
+    while ((radius <= max_radius) && (samples.size() > min_pts))
+    {
+        radius *= 2.0;
+        //PointViewPtr sampledView = view.makeNew();
+        //for (PointId const& sample : samples)
+        //    sampledView->appendPoint(view, sample);
+        //const KD2Index& kdi = sampledView->build2dIndex();
+        //std::vector<int> sampledKeep(sampledView->size(), 1);
+	keep.clear();
+	PointIdList samplesCopy(samples);
+        samples.clear();
+        for (PointId const& sample : samplesCopy)
+        {
+            if (keep[sample] == 0)
+                continue;
+            samples.push_back(sample);
+            PointIdList neighbors = index.radius(sample, radius);
+            for (PointId const& neighbor : neighbors)
+            {
+                if (neighbor == sample)
+                    continue;
+                keep[neighbor] = 0;
+            }
+        }
+
+        for (PointRef p : view)
+        {
+            if (keep[p.pointId()] == 0)
+                continue;
+            samples.push_back(p.pointId());
+            PointIdList neighbors = index.radius(p, radius);
+            for (PointId const& neighbor : neighbors)
+            {
+                if (neighbor == p.pointId())
+                    continue;
+                keep[neighbor] = 0;
+            }
+        }
+
+        ss.push_back(samples);
+
+        log()->get(LogLevel::Debug)
+            << "Sampled " << samples.size() << " points from "
+            << view.size() << " at radius of " << radius << std::endl;
+    }
+
+    log()->get(LogLevel::Debug) << ss.size() << std::endl;
+    return ss;
+}
+
 PointIdList SampledMongusFilter::sample(PointView& view)
 {
     PointIdList emptyids;
     PointIdList samples = sample(view, emptyids);
-//    for (PointId const& id : samples)
-//        view.setField(Id::Classification, id, ClassLabel::Ground);
+    //    for (PointId const& id : samples)
+    //        view.setField(Id::Classification, id, ClassLabel::Ground);
     return samples;
 }
 
@@ -127,8 +211,8 @@ PointIdList SampledMongusFilter::sample(PointView& view, PointIdList ids)
     log()->get(LogLevel::Debug)
         << "Sampled " << std::accumulate(keep.begin(), keep.end(), 0)
         << " points from " << view.size() << " at radius of "
-        << m_radius * m_maxrange << " (" << samples.size() << " > " <<  ids.size() << ")"
-        << std::endl;
+        << m_radius * m_maxrange << " (" << samples.size() << " > "
+        << ids.size() << ")" << std::endl;
 
     return samples;
 }
@@ -250,7 +334,8 @@ PointIdList SampledMongusFilter::foo(PointView& view, PointIdList ids)
     log()->get(LogLevel::Debug)
         << M1 * m_maxrange << " + " << m_thresh << " * "
         << std::sqrt(M2 / (cnt - 1.0)) * m_maxrange << " = "
-        << (M1 + m_thresh * std::sqrt(M2 / (cnt - 1.0))) * m_maxrange << std::endl;
+        << (M1 + m_thresh * std::sqrt(M2 / (cnt - 1.0))) * m_maxrange
+        << std::endl;
 
     PointIdList kept(ids);
     for (PointRef p : *candView)
@@ -260,9 +345,11 @@ PointIdList SampledMongusFilter::foo(PointView& view, PointIdList ids)
             (M1 + m_thresh * std::sqrt(M2 / (cnt - 1.0))))
         {
             kept.push_back(candidates[p.pointId()]);
-            //p.setField(Id::Classification, ClassLabel::Ground);
+            // p.setField(Id::Classification, ClassLabel::Ground);
         }
-	//std::cerr << p.pointId() << ", " << candidates[p.pointId()] << ", " << p.getFieldAs<double>(Id::Residual) << ", " << p.getFieldAs<double>(Id::OpenDilateZ) << std::endl;
+        // std::cerr << p.pointId() << ", " << candidates[p.pointId()] << ", "
+        // << p.getFieldAs<double>(Id::Residual) << ", " <<
+        // p.getFieldAs<double>(Id::OpenDilateZ) << std::endl;
         p.setField(Id::TopHat, (p.getFieldAs<double>(Id::Residual) -
                                 p.getFieldAs<double>(Id::OpenDilateZ)));
     }
@@ -462,6 +549,42 @@ void SampledMongusFilter::filter(PointView& inView)
     };
     std::stable_sort(inView.begin(), inView.end(), cmp);
 
+    // before we do anything else, we can create our poisson sampled scale space
+    // representation by first sampling at the target radius, then resampling
+    // the samples at increasingly larger radii (e.g., 2x at each iteration)
+    // until max radius reached, or there are too few samples (say at least
+    // three are required) this could be a map of iteration/radius to
+    // PointIdList or iteration/radius to PointView, not sure which is easier
+    // better, or maybe we just keep a temp copy at each iteration because we
+    // will want to unroll the scale space, i think we do want to store the map.
+    std::vector<PointIdList> ss = buildScaleSpace(inView);
+
+    // once we reach the top level (max radius or min points), we mark these as
+    // our first set of ground returns and immediately proceed to the next level
+    PointIdList seeds = ss.back();
+    std::cerr << seeds.size() << std::endl;
+    ss.pop_back();
+    for (PointId const& id : seeds)
+	    inView.setField(Id::Classification, id, ClassLabel::Ground);
+
+    PointIdList seeds2 = ss.back();
+    std::cerr << seeds2.size() << std::endl;
+    ss.pop_back();
+    for (PointId const& id : seeds2)
+	    inView.setField(Id::Classification, id, ClassLabel::LowVegetation);
+
+
+    // somewhere in here we will want to scale to unit cube, probably after we
+    // have our PointIdList maps set now we can call our old "foo", which in
+    // reality is
+    //   - interpolate current samples using previous surface estimate
+    //   - compute top hat of residuals
+    //   - compute threshold (neighborhood? global?)
+    //   - apply threshold and keep only good samples, label as ground
+    // afterwards, we can compute one final residual for HAG, and perhaps even
+    // label as ground those that are close enough
+
+    /*
     inView.calculateBounds(m_bounds);
     double xrange = m_bounds.maxx - m_bounds.minx;
     double yrange = m_bounds.maxy - m_bounds.miny;
@@ -517,6 +640,7 @@ void SampledMongusFilter::filter(PointView& inView)
         p.setField(Id::Y, y + centroid.y());
         p.setField(Id::Z, z + centroid.z());
     }
+    */
 }
 
 } // namespace pdal

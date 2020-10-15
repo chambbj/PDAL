@@ -76,6 +76,7 @@ private:
     void baz(PointView& view, PointIdList ids);
     void interpolate(PointViewPtr candView, PointViewPtr gView);
     void tophat(PointViewPtr candView);
+    std::vector<PointIdList> buildScaleSpace(PointView& view);
 };
 
 } // namespace pdal
