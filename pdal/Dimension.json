@@ -496,5 +496,15 @@
     "name": "TopHat",
     "type": "double",
     "description": "White top hat transform result."
+    },
+    {
+    "name": "SurfaceEstimate",
+    "type": "double",
+    "description": "Surface estimate."
+    },
+    {
+    "name": "Residual",
+    "type": "double",
+    "description": "Residual."
     }
 ] }
