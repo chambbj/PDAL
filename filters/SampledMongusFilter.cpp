@@ -80,6 +80,7 @@ void SampledMongusFilter::addDimensions(PointLayoutPtr layout)
     layout->registerDim(Id::SurfaceEstimate);
     layout->registerDim(Id::Residual);
     layout->registerDim(Id::W);
+    layout->registerDim(Id::NNDistance);
 }
 
 std::vector<PointIdList> SampledMongusFilter::buildScaleSpace(PointView& view)
@@ -170,10 +171,13 @@ void SampledMongusFilter::interpolate(PointView& view, PointIdList ids,
             double value = r * r * std::log(r);
             return std::isnan(value) ? 0.0 : value;
         };
-        // PointIdList gIds = gIndex.neighbors(p, m_count);
-        PointIdList gIds = gIndex.radius(p, 8 * radius);
+
+        PointIdList gIds(m_count);
+        std::vector<double> gSqrDists(m_count);
+        gIndex.knnSearch(p, m_count, &gIds, &gSqrDists);
+        // PointIdList gIds = gIndex.radius(p, 8 * radius);
         sum += gIds.size();
-        m_count = gIds.size();
+        // m_count = gIds.size();
         MatrixXd X = MatrixXd::Zero(2, m_count);
         VectorXd y = VectorXd::Zero(m_count);
         VectorXd x = VectorXd::Zero(2);
@@ -208,6 +212,7 @@ void SampledMongusFilter::interpolate(PointView& view, PointIdList ids,
         }
         p.setField(Id::SurfaceEstimate, val);
         p.setField(Id::Residual, p.getFieldAs<double>(Id::Z) - val);
+        p.setField(Id::NNDistance, std::sqrt(gSqrDists.back()));
     }
     log()->get(LogLevel::Debug)
         << "ground contains " << gv->size() << " control points\n";
@@ -234,7 +239,9 @@ void SampledMongusFilter::tophat(PointView& view, PointIdList ids,
     point_count_t sum = 0;
     for (PointRef p : *candView)
     {
-        PointIdList cIds = candIndex.radius(p, 16 * radius);
+        double radius = p.getFieldAs<double>(Id::NNDistance);
+        // log()->get(LogLevel::Debug) << 2 * radius << std::endl;
+        PointIdList cIds = candIndex.radius(p, 2 * radius);
         sum += cIds.size();
         nm[p.pointId()] = cIds;
         std::vector<double> z(cIds.size());
@@ -246,7 +253,7 @@ void SampledMongusFilter::tophat(PointView& view, PointIdList ids,
 
     log()->get(LogLevel::Debug)
         << "found average of " << sum / candView->size() << " neighbors within "
-        << 16 * radius * m_maxrange << std::endl;
+        << 2 * radius * m_maxrange << std::endl;
 
     for (PointRef p : *candView)
     {
