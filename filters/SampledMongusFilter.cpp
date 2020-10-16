@@ -220,7 +220,6 @@ PointIdList SampledMongusFilter::sample(PointView& view, PointIdList ids)
 void SampledMongusFilter::interpolate(PointViewPtr candView, PointViewPtr gView)
 {
     const KD2Index& gIndex = gView->build2dIndex();
-    const KD2Index& candIndex = candView->build2dIndex();
 
     for (PointRef p : *candView)
     {
@@ -267,8 +266,95 @@ void SampledMongusFilter::interpolate(PointViewPtr candView, PointViewPtr gView)
     }
 }
 
+void SampledMongusFilter::interpolate(PointView& view, PointIdList ids, PointViewPtr gView)
+{
+    const KD2Index& gIndex = gView->build2dIndex();
+
+    for (PointId const& id : ids)
+    {
+        PointRef p = view.point(id);
+        auto CalcRbfValue = [](const VectorXd& xi, const VectorXd& xj) {
+            double r = (xj - xi).norm();
+            double value = r * r * std::log(r);
+            return std::isnan(value) ? 0.0 : value;
+        };
+        PointIdList gIds = gIndex.neighbors(p, m_count);
+        MatrixXd X = MatrixXd::Zero(2, m_count);
+        VectorXd y = VectorXd::Zero(m_count);
+        VectorXd x = VectorXd::Zero(2);
+        for (int i = 0; i < m_count; ++i)
+        {
+            X(0, i) = gView->getFieldAs<double>(Id::X, gIds[i]);
+            X(1, i) = gView->getFieldAs<double>(Id::Y, gIds[i]);
+            y(i) = gView->getFieldAs<double>(Id::Z, gIds[i]);
+        }
+        x(0) = p.getFieldAs<double>(Id::X);
+        x(1) = p.getFieldAs<double>(Id::Y);
+        MatrixXd Phi = MatrixXd::Zero(m_count, m_count);
+        for (int i = 0; i < m_count; ++i)
+        {
+            for (int j = 0; j < m_count; ++j)
+            {
+                double value = CalcRbfValue(X.col(i), X.col(j));
+                Phi(i, j) = Phi(j, i) = value;
+            }
+        }
+        MatrixXd A = m_lambdaArg->set()
+                         ? Phi.transpose() * Phi +
+                               m_lambda * MatrixXd::Identity(m_count, m_count)
+                         : Phi;
+        VectorXd b = m_lambdaArg->set() ? Phi.transpose() * y : y;
+        VectorXd w = Eigen::FullPivLU<MatrixXd>(A).solve(b);
+	std::cerr << X << std::endl;
+
+        double val(0.0);
+        for (int i = 0; i < m_count; ++i)
+        {
+            val += w(i) * CalcRbfValue(x, X.col(i));
+        }
+        p.setField(Id::SurfaceEstimate, val);
+        p.setField(Id::Residual, p.getFieldAs<double>(Id::Z));
+    }
+}
+
 void SampledMongusFilter::tophat(PointViewPtr candView)
 {
+    const KD2Index& candIndex = candView->build2dIndex();
+
+    // apply white top hat transform to residuals
+    // erosion then dilation at 2*l (assume that means radius at current level)
+    typedef std::map<PointId, PointIdList> NeighborMap;
+    typedef std::map<PointId, double> ValueMap;
+    NeighborMap nm;
+    ValueMap vm;
+
+    for (PointRef p : *candView)
+    {
+        PointIdList cIds = candIndex.radius(p, 8 * m_radius);
+        nm[p.pointId()] = cIds;
+        std::vector<double> z(cIds.size());
+        for (size_t i = 0; i < cIds.size(); ++i)
+            z[i] = candView->getFieldAs<double>(Id::Residual, cIds[i]);
+        double val = *std::min_element(z.begin(), z.end());
+        p.setField(Id::OpenErodeZ, val);
+    }
+
+    for (PointRef p : *candView)
+    {
+        PointIdList cIds = nm[p.pointId()];
+        std::vector<double> z(cIds.size());
+        for (size_t i = 0; i < cIds.size(); ++i)
+            z[i] = candView->getFieldAs<double>(Id::OpenErodeZ, cIds[i]);
+        double vm2 = *std::max_element(z.begin(), z.end());
+        p.setField(Id::OpenDilateZ, vm2);
+    }
+}
+
+void SampledMongusFilter::tophat(PointView& view, PointIdList ids)
+{
+    PointViewPtr candView = view.makeNew();
+    for (PointId const& id : ids)
+	    candView->appendPoint(view, id);
     const KD2Index& candIndex = candView->build2dIndex();
 
     // apply white top hat transform to residuals
@@ -559,32 +645,6 @@ void SampledMongusFilter::filter(PointView& inView)
     // will want to unroll the scale space, i think we do want to store the map.
     std::vector<PointIdList> ss = buildScaleSpace(inView);
 
-    // once we reach the top level (max radius or min points), we mark these as
-    // our first set of ground returns and immediately proceed to the next level
-    PointIdList seeds = ss.back();
-    std::cerr << seeds.size() << std::endl;
-    ss.pop_back();
-    for (PointId const& id : seeds)
-	    inView.setField(Id::Classification, id, ClassLabel::Ground);
-
-    PointIdList seeds2 = ss.back();
-    std::cerr << seeds2.size() << std::endl;
-    ss.pop_back();
-    for (PointId const& id : seeds2)
-	    inView.setField(Id::Classification, id, ClassLabel::LowVegetation);
-
-
-    // somewhere in here we will want to scale to unit cube, probably after we
-    // have our PointIdList maps set now we can call our old "foo", which in
-    // reality is
-    //   - interpolate current samples using previous surface estimate
-    //   - compute top hat of residuals
-    //   - compute threshold (neighborhood? global?)
-    //   - apply threshold and keep only good samples, label as ground
-    // afterwards, we can compute one final residual for HAG, and perhaps even
-    // label as ground those that are close enough
-
-    /*
     inView.calculateBounds(m_bounds);
     double xrange = m_bounds.maxx - m_bounds.minx;
     double yrange = m_bounds.maxy - m_bounds.miny;
@@ -610,6 +670,83 @@ void SampledMongusFilter::filter(PointView& inView)
     for (PointRef p : inView)
         p.setField(Id::Classification, ClassLabel::Unclassified);
 
+    // once we reach the top level (max radius or min points), we mark these as
+    // our first set of ground returns and immediately proceed to the next level
+    PointIdList seeds = ss.back();
+    std::cerr << seeds.size() << std::endl;
+    ss.pop_back();
+    for (PointId const& id : seeds)
+	    inView.setField(Id::Classification, id, ClassLabel::Ground);
+
+    PointViewPtr gView = inView.makeNew();
+    for (PointId const& id : seeds)
+        gView->appendPoint(inView, id);
+
+    PointIdList seeds2 = ss.back();
+    std::cerr << seeds2.size() << std::endl;
+    ss.pop_back();
+
+    interpolate(inView, seeds2, gView);
+    tophat(inView, seeds2);
+
+    double M1, M2;
+    M1 = M2 = 0.0;
+    point_count_t cnt = 0;
+    for (PointId const& id : seeds2)
+    {
+        PointRef p = inView.point(id);
+        point_count_t n(cnt++);
+        double delta = (p.getFieldAs<double>(Id::Residual) -
+                        p.getFieldAs<double>(Id::OpenDilateZ)) -
+                       M1;
+	std::cerr << delta << std::endl;
+        double delta_n = delta / cnt;
+        M1 += delta_n;
+        M2 += delta * delta_n * n;
+    }
+
+    log()->get(LogLevel::Debug)
+        << M1 * m_maxrange << " + " << m_thresh << " * "
+        << std::sqrt(M2 / (cnt - 1.0)) * m_maxrange << " = "
+        << (M1 + m_thresh * std::sqrt(M2 / (cnt - 1.0))) * m_maxrange
+        << std::endl;
+
+    PointIdList kept;
+    for (PointId const& id : seeds2)
+    {
+        PointRef p = inView.point(id);
+        if ((p.getFieldAs<double>(Id::Residual) -
+             p.getFieldAs<double>(Id::OpenDilateZ)) <
+            (M1 + m_thresh * std::sqrt(M2 / (cnt - 1.0))))
+        {
+            kept.push_back(id);
+            // p.setField(Id::Classification, ClassLabel::Ground);
+        }
+        // std::cerr << p.pointId() << ", " << candidates[p.pointId()] << ", "
+        // << p.getFieldAs<double>(Id::Residual) << ", " <<
+        // p.getFieldAs<double>(Id::OpenDilateZ) << std::endl;
+        p.setField(Id::TopHat, (p.getFieldAs<double>(Id::Residual) -
+                                p.getFieldAs<double>(Id::OpenDilateZ)));
+    }
+    log()->get(LogLevel::Debug)
+        << "Keep " << kept.size() << " of " << seeds2.size() << "+"
+        << seeds.size() << "=" << seeds2.size() + seeds.size() << std::endl;
+
+    for (PointId const& id : kept)
+        inView.setField(Id::Classification, id, ClassLabel::LowVegetation);
+
+
+    // somewhere in here we will want to scale to unit cube, probably after we
+    // have our PointIdList maps set now we can call our old "foo", which in
+    // reality is
+    //   - interpolate current samples using previous surface estimate
+    //   - compute top hat of residuals
+    //   - compute threshold (neighborhood? global?)
+    //   - apply threshold and keep only good samples, label as ground
+    // afterwards, we can compute one final residual for HAG, and perhaps even
+    // label as ground those that are close enough
+
+    /*
     log()->get(LogLevel::Info) << "Finding seed points\n";
     PointIdList samples = sample(inView);
 

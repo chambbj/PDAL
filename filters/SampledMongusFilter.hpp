@@ -75,7 +75,9 @@ private:
     void bar(PointView& view, PointIdList ids);
     void baz(PointView& view, PointIdList ids);
     void interpolate(PointViewPtr candView, PointViewPtr gView);
+    void interpolate(PointView& view, PointIdList ids, PointViewPtr gView);
     void tophat(PointViewPtr candView);
+    void tophat(PointView& view, PointIdList ids);
     std::vector<PointIdList> buildScaleSpace(PointView& view);
 };
 
