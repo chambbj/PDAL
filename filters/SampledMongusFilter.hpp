@@ -69,14 +69,7 @@ private:
     virtual void addDimensions(PointLayoutPtr layout);
     virtual void filter(PointView& view);
 
-    PointIdList sample(PointView& view);
-    PointIdList sample(PointView& view, PointIdList ids);
-    PointIdList foo(PointView& view, PointIdList ids);
-    void bar(PointView& view, PointIdList ids);
-    void baz(PointView& view, PointIdList ids);
-    void interpolate(PointViewPtr candView, PointViewPtr gView);
     void interpolate(PointView& view, PointIdList ids, PointViewPtr gView);
-    void tophat(PointViewPtr candView);
     void tophat(PointView& view, PointIdList ids);
     std::vector<PointIdList> buildScaleSpace(PointView& view);
     double determineThreshold(PointView& view, PointIdList ids);
