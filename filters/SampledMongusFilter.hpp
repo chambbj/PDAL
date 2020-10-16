@@ -79,6 +79,8 @@ private:
     void tophat(PointViewPtr candView);
     void tophat(PointView& view, PointIdList ids);
     std::vector<PointIdList> buildScaleSpace(PointView& view);
+    double determineThreshold(PointView& view, PointIdList ids);
+    void classifyPoints(PointView& view, PointIdList ids, double thresh);
 };
 
 } // namespace pdal
