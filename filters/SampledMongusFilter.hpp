@@ -54,11 +54,9 @@ public:
 
 private:
     double m_radius;
+    double m_maxRadius;
     int m_count;
-    int m_maxiters;
     double m_thresh;
-    double m_radDecay;
-    double m_threshDecay;
     double m_lambda;
     double m_lambdaDecay;
     Arg* m_lambdaArg;
@@ -69,11 +67,10 @@ private:
     virtual void addDimensions(PointLayoutPtr layout);
     virtual void filter(PointView& view);
 
-    void interpolate(PointView& view, PointIdList ids, PointViewPtr gView,
-                     double radius);
-    double tophat(PointView& view, PointIdList ids, double radius);
+    void interpolate(PointView& view, PointIdList ids, double radius);
+    void tophat(PointView& view, PointIdList ids, double radius);
     std::vector<PointIdList> buildScaleSpace(PointView& view);
-    void classifyPoints(PointView& view, PointIdList ids, double thresh);
+    void classifyPoints(PointView& view, PointIdList ids);
 };
 
 } // namespace pdal
