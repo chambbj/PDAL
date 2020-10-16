@@ -227,8 +227,8 @@ void SampledMongusFilter::interpolate(PointView& view, PointIdList ids,
     std::cerr << "ave interp neighbors " << sum / ids.size() << std::endl;
 }
 
-void SampledMongusFilter::tophat(PointView& view, PointIdList ids,
-                                 double radius)
+double SampledMongusFilter::tophat(PointView& view, PointIdList ids,
+                                   double radius)
 {
     PointViewPtr candView = view.makeNew();
     for (PointId const& id : ids)
@@ -269,10 +269,7 @@ void SampledMongusFilter::tophat(PointView& view, PointIdList ids,
         p.setField(Id::TopHat, (p.getFieldAs<double>(Id::Residual) -
                                 p.getFieldAs<double>(Id::OpenDilateZ)));
     }
-}
 
-double SampledMongusFilter::determineThreshold(PointView& view, PointIdList ids)
-{
     double M1, M2;
     M1 = M2 = 0.0;
     point_count_t cnt = 0;
@@ -404,10 +401,8 @@ void SampledMongusFilter::filter(PointView& inView)
 
         interpolate(inView, seeds3, gView2, radius);
         std::cerr << "interp -> tophat\n";
-        tophat(inView, seeds3, radius);
-        std::cerr << "tophat -> thresh\n";
-        double thresh = determineThreshold(inView, seeds3);
-        std::cerr << "thresh -> classify\n";
+        double thresh = tophat(inView, seeds3, radius);
+        std::cerr << "tophat -> classify\n";
         classifyPoints(inView, seeds3, thresh);
         std::cerr << "done\n";
     }

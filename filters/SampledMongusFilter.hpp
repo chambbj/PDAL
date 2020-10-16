@@ -71,9 +71,8 @@ private:
 
     void interpolate(PointView& view, PointIdList ids, PointViewPtr gView,
                      double radius);
-    void tophat(PointView& view, PointIdList ids, double radius);
+    double tophat(PointView& view, PointIdList ids, double radius);
     std::vector<PointIdList> buildScaleSpace(PointView& view);
-    double determineThreshold(PointView& view, PointIdList ids);
     void classifyPoints(PointView& view, PointIdList ids, double thresh);
 };
 
