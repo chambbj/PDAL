@@ -171,10 +171,12 @@ std::vector<PointIdList> SampledMongusFilter::buildScaleSpace(PointView& view)
 }
 
 void SampledMongusFilter::interpolate(PointView& view, PointIdList ids,
-                                      PointViewPtr gView)
+                                      PointViewPtr gView, double radius)
 {
     const KD2Index& gIndex = gView->build2dIndex();
+    std::cerr << 8 * radius * m_maxrange << std::endl;
 
+    point_count_t sum = 0;
     for (PointId const& id : ids)
     {
         PointRef p = view.point(id);
@@ -183,7 +185,10 @@ void SampledMongusFilter::interpolate(PointView& view, PointIdList ids,
             double value = r * r * std::log(r);
             return std::isnan(value) ? 0.0 : value;
         };
-        PointIdList gIds = gIndex.neighbors(p, m_count);
+        // PointIdList gIds = gIndex.neighbors(p, m_count);
+        PointIdList gIds = gIndex.radius(p, 8 * radius);
+        sum += gIds.size();
+        m_count = gIds.size();
         MatrixXd X = MatrixXd::Zero(2, m_count);
         VectorXd y = VectorXd::Zero(m_count);
         VectorXd x = VectorXd::Zero(2);
@@ -219,9 +224,11 @@ void SampledMongusFilter::interpolate(PointView& view, PointIdList ids,
         p.setField(Id::SurfaceEstimate, val);
         p.setField(Id::Residual, p.getFieldAs<double>(Id::Z) - val);
     }
+    std::cerr << "ave interp neighbors " << sum / ids.size() << std::endl;
 }
 
-void SampledMongusFilter::tophat(PointView& view, PointIdList ids)
+void SampledMongusFilter::tophat(PointView& view, PointIdList ids,
+                                 double radius)
 {
     PointViewPtr candView = view.makeNew();
     for (PointId const& id : ids)
@@ -235,9 +242,13 @@ void SampledMongusFilter::tophat(PointView& view, PointIdList ids)
     NeighborMap nm;
     ValueMap vm;
 
+    std::cerr << 16 * radius * m_maxrange << std::endl;
+
+    point_count_t sum = 0;
     for (PointRef p : *candView)
     {
-        PointIdList cIds = candIndex.radius(p, 8 * m_radius);
+        PointIdList cIds = candIndex.radius(p, 16 * radius);
+        sum += cIds.size();
         nm[p.pointId()] = cIds;
         std::vector<double> z(cIds.size());
         for (size_t i = 0; i < cIds.size(); ++i)
@@ -245,6 +256,7 @@ void SampledMongusFilter::tophat(PointView& view, PointIdList ids)
         double val = *std::min_element(z.begin(), z.end());
         p.setField(Id::OpenErodeZ, val);
     }
+    std::cerr << "tophat neighbors " << sum / candView->size() << std::endl;
 
     for (PointRef p : *candView)
     {
@@ -332,7 +344,11 @@ void SampledMongusFilter::filter(PointView& inView)
     double zrange = m_bounds.maxz - m_bounds.minz;
     m_maxrange = 2 * std::max(xrange, std::max(yrange, zrange));
 
-    m_radius /= m_maxrange;
+    // m_radius /= m_maxrange;
+
+    // somewhere in here we will want to scale to unit cube, probably after we
+    // have our PointIdList maps set now we can call our old "foo", which in
+    // reality is
 
     PointIdList ids(inView.size());
     std::iota(ids.begin(), ids.end(), 0);
@@ -378,9 +394,17 @@ void SampledMongusFilter::filter(PointView& inView)
         std::cerr << "candidate size: " << seeds3.size() << std::endl;
         ss.pop_back();
 
-        interpolate(inView, seeds3, gView2);
+        //   - interpolate current samples using previous surface estimate
+        //   - compute top hat of residuals
+        //   - compute threshold (neighborhood? global?)
+        //   - apply threshold and keep only good samples, label as ground
+
+        double radius = std::pow(2.0, ss.size()) / m_maxrange;
+        std::cerr << radius << std::endl;
+
+        interpolate(inView, seeds3, gView2, radius);
         std::cerr << "interp -> tophat\n";
-        tophat(inView, seeds3);
+        tophat(inView, seeds3, radius);
         std::cerr << "tophat -> thresh\n";
         double thresh = determineThreshold(inView, seeds3);
         std::cerr << "thresh -> classify\n";
@@ -388,13 +412,6 @@ void SampledMongusFilter::filter(PointView& inView)
         std::cerr << "done\n";
     }
 
-    // somewhere in here we will want to scale to unit cube, probably after we
-    // have our PointIdList maps set now we can call our old "foo", which in
-    // reality is
-    //   - interpolate current samples using previous surface estimate
-    //   - compute top hat of residuals
-    //   - compute threshold (neighborhood? global?)
-    //   - apply threshold and keep only good samples, label as ground
     // afterwards, we can compute one final residual for HAG, and perhaps even
     // label as ground those that are close enough
 
